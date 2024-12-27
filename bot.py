@@ -30,35 +30,9 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Crear una instancia de Flask para abrir un puerto
 app = Flask(__name__)
 
-# Variable para almacenar el estado único
+# Variables globales para autenticación
 auth_state = {}
-
-# Variable global para almacenar la instancia de EVEAuth
 auth = None
-
-@app.route('/callback')
-def callback():
-    """Ruta para manejar el callback de EVE Online"""
-    code = request.args.get('code')
-    state = request.args.get('state')
-    
-    if not code or not state:
-        return "Faltan parámetros 'code' o 'state'.", 400
-
-    if state != auth_state.get('state'):
-        return "El parámetro 'state' no es válido o ha caducado.", 400
-
-    success = auth.exchange_code(code)
-    if success:
-        return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
-    else:
-        return "Hubo un error en la autenticación. Intenta de nuevo.", 400
-
-def run_flask():
-    # Usar un puerto que Render asigna automáticamente
-    app.run(host='0.0.0.0', port=8080)
-
-# Aquí empieza la configuración de EVE y el monitoreo
 
 class EVEAuth:
     def __init__(self):
@@ -72,14 +46,12 @@ class EVEAuth:
     async def get_auth_url(self):
         """Genera URL de autenticación"""
         scopes = 'esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
-        state = self.generate_state()  # Generamos un valor único para el 'state'
-        
-        # Almacenamos el estado generado para usarlo en el callback
+        state = self.generate_state()
         auth_state['state'] = state
 
         return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     
-    async def exchange_code(self, code):
+    def exchange_code(self, code):
         """Intercambia el código por tokens"""
         try:
             auth_url = 'https://login.eveonline.com/v2/oauth/token'
@@ -93,7 +65,7 @@ class EVEAuth:
             data = {
                 'grant_type': 'authorization_code',
                 'code': code,
-                'redirect_uri': 'https://eve-discord-bot.onrender.com'
+                'redirect_uri': 'https://eve-discord-bot.onrender.com/callback'
             }
             
             response = requests.post(auth_url, headers=headers, data=data)
@@ -105,6 +77,34 @@ class EVEAuth:
             return False
         except Exception as e:
             print(f"Error en autenticación: {str(e)}")
+            return False
+
+    async def refresh_access_token(self):
+        """Refresca el token de acceso usando el refresh token"""
+        try:
+            auth_url = 'https://login.eveonline.com/v2/oauth/token'
+            credentials = base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode('utf-8')).decode('utf-8')
+            
+            headers = {
+                'Authorization': f'Basic {credentials}',
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+            
+            data = {
+                'grant_type': 'refresh_token',
+                'refresh_token': self.refresh_token
+            }
+            
+            response = requests.post(auth_url, headers=headers, data=data)
+            if response.status_code == 200:
+                tokens = response.json()
+                self.access_token = tokens['access_token']
+                if 'refresh_token' in tokens:  # Algunos endpoints devuelven un nuevo refresh token
+                    self.refresh_token = tokens['refresh_token']
+                return True
+            return False
+        except Exception as e:
+            print(f"Error refrescando token: {str(e)}")
             return False
 
 class EVEStructureMonitor:
@@ -124,8 +124,20 @@ class EVEStructureMonitor:
                 f'{ESI_BASE_URL}/corporations/{CORP_ID}/structures/',
                 headers=headers
             )
+            
+            if response.status_code == 401:  # Token expirado
+                if await self.auth.refresh_access_token():
+                    # Reintentar con el nuevo token
+                    headers = {'Authorization': f'Bearer {self.auth.access_token}'}
+                    response = requests.get(
+                        f'{ESI_BASE_URL}/corporations/{CORP_ID}/structures/',
+                        headers=headers
+                    )
+            
             if response.status_code == 200:
                 return response.json()
+            
+            print(f"Error en get_corp_structures: Status code {response.status_code}")
             return []
         except Exception as e:
             print(f"Error obteniendo estructuras: {str(e)}")
@@ -145,68 +157,103 @@ class EVEStructureMonitor:
                 'shield_percentage': structure.get('shield_percentage', 100)
             }
 
-            # Verifica que el campo `under_attack` está presente
-            print(f"Estado de la estructura {structure_id}: {current_status}")  # Verifica los datos de la estructura
+            print(f"Estado de la estructura {structure_id}: {current_status}")
 
             if current_status['under_attack']:
-                alerts.append(f"¡ALERTA! Estructura {structure_id} está bajo ataque!")
+                alerts.append(f"🚨 ¡ALERTA! Estructura {structure_id} está bajo ataque!")
 
             if structure_id in self.structures_status:
                 old_status = self.structures_status[structure_id]
                 
+                # Verificar cambios en el estado de ataque
                 if current_status['under_attack'] and not old_status.get('under_attack', False):
-                    alerts.append(f"¡ALERTA! Estructura {structure_id} está bajo ataque!")
+                    alerts.append(f"🚨 ¡ALERTA! Estructura {structure_id} está bajo ataque!")
 
+                # Verificar nivel de combustible
                 if current_status['fuel_expires']:
                     fuel_time = datetime.datetime.strptime(current_status['fuel_expires'], '%Y-%m-%dT%H:%M:%SZ')
-                    if fuel_time - datetime.datetime.utcnow() < datetime.timedelta(days=2):
-                        alerts.append(f"⚠️ Estructura {structure_id} tiene poco combustible! Se acaba en {fuel_time}")
+                    time_remaining = fuel_time - datetime.datetime.utcnow()
+                    
+                    if time_remaining < datetime.timedelta(days=2):
+                        alerts.append(f"⚠️ Estructura {structure_id} tiene poco combustible! Se acaba en {fuel_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
             self.structures_status[structure_id] = current_status
 
         return alerts
 
-# Configura las tareas programadas y los comandos del bot
+# Rutas de Flask
+@app.route('/callback')
+def callback():
+    """Ruta para manejar el callback de EVE Online"""
+    code = request.args.get('code')
+    state = request.args.get('state')
+    
+    if not code or not state:
+        return "Faltan parámetros 'code' o 'state'.", 400
 
+    if state != auth_state.get('state'):
+        return "El parámetro 'state' no es válido o ha caducado.", 400
+
+    if auth is None:
+        return "No se ha iniciado el proceso de autenticación.", 400
+
+    success = auth.exchange_code(code)
+    if success:
+        return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
+    else:
+        return "Hubo un error en la autenticación. Intenta de nuevo.", 400
+
+# Eventos y comandos del bot
 @bot.event
 async def on_ready():
+    """Evento que se ejecuta cuando el bot está listo"""
     print(f'¡Bot conectado como {bot.user.name}!')
-
-    # Iniciar tareas en segundo plano
     check_status.start()
 
-@tasks.loop(minutes=2)  # Verificar cada 2 minutos
+@tasks.loop(minutes=2)
 async def check_status():
-    """Verifica el estado de las estructuras cada 10 minutos"""
-    if auth and auth.access_token:  # Asegúrate de que 'auth' está definido y tiene el token
+    """Verifica el estado de las estructuras periódicamente"""
+    if auth and auth.access_token:
         monitor = EVEStructureMonitor(auth)
         alerts = await monitor.check_structures_status()
 
         if alerts:
             channel = bot.get_channel(CHANNEL_ID)
-            for alert in alerts:
-                await channel.send(alert)
+            if channel:
+                for alert in alerts:
+                    await channel.send(alert)
+            else:
+                print(f"Error: No se pudo encontrar el canal con ID {CHANNEL_ID}")
     else:
         print("El bot no está autenticado, no se pueden verificar las estructuras.")
 
-@bot.command()
-async def auth(ctx):
+@bot.command(name='authenticate')
+async def authenticate_command(ctx):
     """Comando para iniciar la autenticación en EVE Online"""
     global auth
 
-    # Verifica si ya existe una instancia de auth en proceso
-    if auth is None or (auth.access_token and auth.refresh_token):
+    if auth is None or (auth.access_token is None and auth.refresh_token is None):
         auth = EVEAuth()
         auth_url = await auth.get_auth_url()
         await ctx.send(f"Para autorizar el bot, haz clic en este enlace: {auth_url}")
     else:
-        await ctx.send("El bot ya está en proceso de autenticación. Espera un momento.")
-        
-# Ejecutar el bot en un hilo separado para permitir que Flask funcione
-def run_discord_bot():
-    bot.run(TOKEN)
+        await ctx.send("El bot ya está en proceso de autenticación o ya está autenticado.")
 
-# Ejecutar el bot y el servidor Flask en paralelo
+@bot.command(name='status')
+async def status_command(ctx):
+    """Comando para verificar el estado de autenticación del bot"""
+    if auth and auth.access_token:
+        await ctx.send("✅ El bot está autenticado y monitoreando estructuras.")
+    else:
+        await ctx.send("❌ El bot no está autenticado. Usa !authenticate para comenzar.")
+
+def run_flask():
+    """Función para ejecutar el servidor Flask"""
+    app.run(host='0.0.0.0', port=8080)
+
+# Ejecución principal
 if __name__ == '__main__':
+    # Iniciar Flask en un hilo separado
     threading.Thread(target=run_flask).start()
-    run_discord_bot()
+    # Iniciar el bot de Discord
+    bot.run(TOKEN)
