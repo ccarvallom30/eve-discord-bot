@@ -1,98 +1,84 @@
 import discord
-import requests
-import asyncio
 import os
-from datetime import datetime
-from flask import Flask
+import requests
+from discord.ext import commands
+import webbrowser
 
-# Configura Flask
-app = Flask(__name__)
-
-# Configura el bot de Discord
-TOKEN = os.getenv("DISCORD_BOT_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Asegúrate de convertirlo a entero
-
-# Configura la API de EVE Online
-CLIENT_ID = os.getenv("CLIENT_ID")
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-REFRESH_TOKEN = os.getenv("REFRESH_TOKEN")
-CHARACTER_ID = os.getenv("CHARACTER_ID")
-BASE_URL = "https://esi.evetech.net/latest"
-
+# Configuración de tu bot
 intents = discord.Intents.default()
-bot = discord.Client(intents=intents)
+bot = commands.Bot(command_prefix="!", intents=intents)
 
-# Función para obtener un nuevo Access Token
-def get_access_token():
-    url = "https://login.eveonline.com/v2/oauth/token"
-    headers = {"Content-Type": "application/x-www-form-urlencoded"}
-    data = {
-        "grant_type": "refresh_token",
-        "refresh_token": REFRESH_TOKEN,
-        "client_id": CLIENT_ID,
-        "client_secret": CLIENT_SECRET,
-    }
-    response = requests.post(url, headers=headers, data=data)
-    response.raise_for_status()
-    return response.json()["access_token"]
+# Variables de configuración (puedes cambiarlas a variables de entorno más tarde)
+CLIENT_ID = os.getenv("CLIENT_ID")  # Este será el Client ID de la app de EVE Online
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")  # El Client Secret
+REDIRECT_URI = os.getenv("REDIRECT_URI")  # La URL de redirección de la aplicación
+SCOPE = "publicData characterData esi-universe.read_structures.v1"  # Los permisos necesarios
 
-# Función para obtener notificaciones de EVE
-def get_eve_notifications():
-    token = get_access_token()
-    url = f"{BASE_URL}/characters/{CHARACTER_ID}/notifications/"
-    headers = {"Authorization": f"Bearer {token}"}
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
-    return response.json()
+# URL de autorización para OAuth2
+AUTH_URL = f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri={REDIRECT_URI}&client_id={CLIENT_ID}&scope={SCOPE}"
 
-# Función para procesar las notificaciones
-async def check_notifications():
-    await bot.wait_until_ready()
-    channel = bot.get_channel(CHANNEL_ID)
-    seen_notifications = set()
+# Comando `setup` para almacenar configuraciones
+@bot.command()
+async def setup(ctx):
+    # Enviar un mensaje indicando que el bot necesita configurar las credenciales
+    await ctx.send("Por favor, asegúrate de tener configurados el `CLIENT_ID`, `CLIENT_SECRET` y `REDIRECT_URI` en las variables de entorno.")
 
-    while True:
-        try:
-            notifications = get_eve_notifications()
-            for notification in notifications:
-                if notification["notification_id"] not in seen_notifications:
-                    seen_notifications.add(notification["notification_id"])
-                    
-                    # Procesa las notificaciones de ataques
-                    if notification["type"] == "StructureUnderAttack":
-                        timestamp = notification["timestamp"]
-                        text = notification["text"]
-                        message = f"🚨 **EVE Alert:** {text}\n📅 Hora: {timestamp}"
-                        await channel.send(message)
+    # También podrías permitir que el usuario configure estas variables a través de comandos si lo deseas.
+    await ctx.send("Usa el comando `!auth` para iniciar el proceso de autenticación con EVE Online.")
 
-            await asyncio.sleep(60)  # Verifica cada minuto
-        except Exception as e:
-            print(f"Error: {e}")
-            await asyncio.sleep(60)
+# Comando `auth` para iniciar la autenticación OAuth2
+@bot.command()
+async def auth(ctx):
+    # Asegurémonos de que las credenciales estén configuradas
+    if CLIENT_ID is None or CLIENT_SECRET is None or REDIRECT_URI is None:
+        await ctx.send("Las credenciales no están configuradas correctamente. Usa `!setup` para configurar.")
+        return
+    
+    # Redirige al usuario a la URL de autorización
+    await ctx.send(f"Por favor autoriza el acceso a tu cuenta de EVE Online haciendo clic en el siguiente enlace: {AUTH_URL}")
 
-# Evento para iniciar el bot
+    # Abre la URL de autorización en el navegador del usuario (para facilitar el proceso)
+    webbrowser.open(AUTH_URL)
+
+# Comando `callback` para manejar la respuesta del flujo OAuth2 (necesitarás usar Flask)
+# Este es solo un ejemplo de cómo se manejaría el callback
+@app.route("/callback")
+def callback():
+    # Obtén el `code` de la URL que EVE Online nos devuelve
+    authorization_code = request.args.get("code")
+
+    if authorization_code:
+        # Intercambia el `authorization_code` por un `refresh_token`
+        data = {
+            "grant_type": "authorization_code",
+            "code": authorization_code,
+            "redirect_uri": REDIRECT_URI,
+            "client_id": CLIENT_ID,
+            "client_secret": CLIENT_SECRET
+        }
+
+        headers = {
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+
+        # Solicitud POST para obtener el refresh_token
+        response = requests.post("https://login.eveonline.com/v2/oauth/token", data=data, headers=headers)
+
+        if response.status_code == 200:
+            # Extrae el refresh_token y envíalo al canal de Discord
+            json_response = response.json()
+            refresh_token = json_response["refresh_token"]
+            # Aquí puedes guardar el refresh_token en una base de datos o en un archivo seguro
+            return f"Refresh token obtenido: {refresh_token}"
+        else:
+            return f"Error al obtener el refresh token: {response.status_code}"
+
+    return "Código de autorización no recibido."
+
+# Evento de inicialización
 @bot.event
 async def on_ready():
-    print(f"Bot conectado como {bot.user}")
+    print(f'Bot conectado como {bot.user}')
 
-# Ruta básica de Flask para mantener el servicio activo
-@app.route("/")
-def home():
-    return "El bot de EVE Online está en funcionamiento."
-
-# Inicia el loop de notificaciones
-bot.loop.create_task(check_notifications())
-
-if __name__ == "__main__":
-    # Ejecuta el bot y el servidor Flask
-    from threading import Thread
-
-    def run_flask():
-        app.run(host="0.0.0.0", port=8000)
-
-    # Ejecuta Flask en un hilo
-    thread = Thread(target=run_flask)
-    thread.start()
-
-    # Ejecuta el bot de Discord
-    bot.run(TOKEN)
+# Ejecuta el bot
+bot.run(os.getenv("DISCORD_BOT_TOKEN"))
