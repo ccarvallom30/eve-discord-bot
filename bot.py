@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import requests
 import datetime
 import asyncio
@@ -64,7 +64,7 @@ class EVEAuth:
         log_with_timestamp("🔑 Generando URL de autenticación")
         return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     
-    async def exchange_code(self, code):
+    def exchange_code(self, code):
         """Intercambia el código por tokens"""
         try:
             auth_url = 'https://login.eveonline.com/v2/oauth/token'
@@ -198,9 +198,6 @@ class EVEStructureMonitor:
         """Verificar el estado de todas las estructuras"""
         log_with_timestamp("⏰ Iniciando verificación de estructuras...")
         structures = await self.get_corp_structures()
-        if not structures:
-            return []
-
         log_with_timestamp(f"📊 Número de estructuras encontradas: {len(structures)}")
         alerts = []
 
@@ -241,39 +238,11 @@ class EVEStructureMonitor:
 
             self.structures_status[structure_id] = current_status
 
-        return alerts, structures
-
-async def check_structures():
-    """Función para verificar el estado de las estructuras"""
-    try:
-        log_with_timestamp("\n=== VERIFICACIÓN DE ESTRUCTURAS ===")
-        
-        if not auth or not auth.access_token:
-            log_with_timestamp("❌ Error: Bot no autenticado - Usa !auth primero")
-            return
-            
-        monitor = EVEStructureMonitor(auth)
-        alerts = await monitor.check_structures_status()
-        
-        if alerts:
-            channel = bot.get_channel(CHANNEL_ID)
-            if channel:
-                log_with_timestamp(f"📢 Enviando {len(alerts)} alertas al canal")
-                for alert in alerts:
-                    await channel.send(alert)
-        else:
-            log_with_timestamp("✅ No hay alertas que reportar")
-        
-        log_with_timestamp("=== VERIFICACIÓN COMPLETADA ===\n")
-            
-    except Exception as e:
-        log_with_timestamp(f"❌ Error verificando estructuras: {str(e)}")
-        import traceback
-        log_with_timestamp(traceback.format_exc())
+        return alerts
 
 # Configurar las rutas de Flask
 @app.route('/callback')
-async def callback():
+def callback():
     """Ruta para manejar el callback de EVE Online"""
     code = request.args.get('code')
     state = request.args.get('state')
@@ -287,7 +256,7 @@ async def callback():
     if auth is None:
         return "No se ha iniciado el proceso de autenticación.", 400
 
-    success = await auth.exchange_code(code)
+    success = auth.exchange_code(code)
     if success:
         return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
     else:
@@ -323,8 +292,30 @@ def status():
 class EVECommands(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
-        self._lock = asyncio.Lock()  # Lock para evitar comandos duplicados
-
+    
+    @commands.command(name='ping')
+    async def ping(self, ctx):
+        """Prueba la respuesta del bot"""
+        await ctx.send('¡Pong! 🏓')
+    
+    @commands.command(name='status')
+    async def status(self, ctx):
+        """Muestra el estado actual de autenticación del bot"""
+        if auth and auth.access_token:
+            await ctx.send("✅ El bot está autenticado y monitoreando estructuras.")
+        else:
+            await ctx.send("❌ El bot no está autenticado. Usa !auth para comenzar.")
+    
+    @commands.command(name='auth')
+    async def auth(self, ctx):
+        """Inicia el proceso de autenticación con EVE Online"""
+        global auth
+        
+        # Evitar múltiples solicitudes de autenticación
+        if hasattr(self, '_auth_in_progress'):
+            await ctx.send("⏳ Ya hay una autenticación en proceso, por favor espera...")
+            return
+            
         self._auth_in_progress = True
         
         try:
@@ -356,6 +347,7 @@ class EVECommands(commands.Cog):
             status_message = "📊 **Estado actual de las estructuras:**\n\n"
             
             for structure in structures:
+                # Manejar el valor de los escudos
                 shield_value = structure.get('shield_percentage')
                 shield_display = f"{shield_value:.1f}" if shield_value is not None else "No disponible"
                 shield_emoji = "🛡️" if shield_value is not None else "❓"
@@ -377,6 +369,7 @@ class EVECommands(commands.Cog):
                     f"▫️ {shield_emoji} Escudos: {shield_display}\n\n"
                 )
 
+            # Dividir el mensaje si es muy largo (límite de Discord es 2000 caracteres)
             if len(status_message) > 1900:
                 messages = [status_message[i:i+1900] for i in range(0, len(status_message), 1900)]
                 for msg in messages:
@@ -397,6 +390,62 @@ class EVECommands(commands.Cog):
                       "3. Usa !status para verificar el estado actual\n"
                       "4. Usa !structures para ver el estado de todas las estructuras")
 
+# Tareas programadas
+@tasks.loop(seconds=120)  # Cambiado de minutes=2 a seconds=120 para mayor precisión
+async def check_structures():
+    """Función para verificar el estado de las estructuras"""
+    try:
+        log_with_timestamp("\n=== VERIFICACIÓN DE ESTRUCTURAS ===")
+        
+        if not auth:
+            log_with_timestamp("❌ Error: Bot no autenticado - Usa !auth primero")
+            return
+            
+        if not auth.access_token:
+            log_with_timestamp("❌ Error: No hay access token - Usa !auth primero")
+            return
+            
+        log_with_timestamp("✅ Bot autenticado, procediendo con la verificación")
+        monitor = EVEStructureMonitor(auth)
+        
+        # Obtener y verificar estructuras
+        structures = await monitor.get_corp_structures()
+        log_with_timestamp(f"📊 Estructuras encontradas: {len(structures)}")
+        
+        alerts = await monitor.check_structures_status()
+        
+        if alerts:
+            channel = bot.get_channel(CHANNEL_ID)
+            if channel:
+                log_with_timestamp(f"📢 Enviando {len(alerts)} alertas al canal")
+                for alert in alerts:
+                    await channel.send(alert)
+            else:
+                log_with_timestamp(f"❌ Error: No se pudo encontrar el canal con ID {CHANNEL_ID}")
+        else:
+            log_with_timestamp("✅ No hay alertas que reportar")
+        
+        log_with_timestamp("=== VERIFICACIÓN COMPLETADA ===\n")
+            
+    except Exception as e:
+        log_with_timestamp(f"❌ Error verificando estructuras: {str(e)}")
+        import traceback
+        log_with_timestamp(traceback.format_exc())
+
+@check_status.before_loop
+async def before_check_status():
+    """Se ejecuta antes de iniciar el loop de verificación"""
+    await bot.wait_until_ready()
+    log_with_timestamp("🔄 Tarea de verificación inicializada y esperando al bot...")
+
+@check_status.after_loop
+async def after_check_status():
+    """Se ejecuta si el loop se detiene"""
+    if check_status.failed():
+        log_with_timestamp(f"❌ La tarea de verificación se detuvo debido a un error: {check_status.get_task().exception()}")
+    else:
+        log_with_timestamp("⚠️ La tarea de verificación se ha detenido")
+
 def keep_alive():
     """Función para mantener el servicio activo y verificar estructuras"""
     global is_service_active
@@ -405,6 +454,7 @@ def keep_alive():
     
     while is_service_active:
         try:
+            # Hacer ping
             response = requests.get(f'{RENDER_URL}/ping')
             ping_count += 1
             
@@ -412,11 +462,12 @@ def keep_alive():
                 log_with_timestamp(f"✅ Keep-alive ping #{ping_count} exitoso")
                 
                 # Verificar estructuras cada 4 pings
-                if (ping_count - 1) % 4 == 0:
+                if ping_count % 4 == 0:
                     log_with_timestamp(f"🔄 Verificando estructuras en ping #{ping_count}")
                     asyncio.run_coroutine_threadsafe(check_structures(), bot.loop)
             else:
                 log_with_timestamp(f"⚠️ Keep-alive ping #{ping_count} respondió con código: {response.status_code}")
+                
         except Exception as e:
             log_with_timestamp(f"❌ Error en keep-alive: {str(e)}")
             ping_count = 0
@@ -477,28 +528,3 @@ if __name__ == '__main__':
         # Asegurar una limpieza adecuada
         stop_keep_alive()
         log_with_timestamp("👋 Servicio finalizado")
-    
-    @commands.command(name='ping')
-    async def ping(self, ctx):
-        """Prueba la respuesta del bot"""
-        await ctx.send('¡Pong! 🏓')
-    
-    @commands.command(name='status')
-    async def status(self, ctx):
-        """Muestra el estado actual de autenticación del bot"""
-        async with self._lock:
-            if auth and auth.access_token:
-                await ctx.send("✅ El bot está autenticado y monitoreando estructuras.")
-            else:
-                await ctx.send("❌ El bot no está autenticado. Usa !auth para comenzar.")
-    
-    @commands.command(name='auth')
-    async def auth(self, ctx):
-        """Inicia el proceso de autenticación con EVE Online"""
-        global auth
-        
-        if hasattr(self, '_auth_in_progress'):
-            await ctx.send("⏳ Ya hay una autenticación en proceso, por favor espera...")
-            return
-            
-        self._
