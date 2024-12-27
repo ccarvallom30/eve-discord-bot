@@ -432,13 +432,13 @@ async def check_structures():
         import traceback
         log_with_timestamp(traceback.format_exc())
 
-@check_status.before_loop
+@check_structures.before_loop
 async def before_check_status():
     """Se ejecuta antes de iniciar el loop de verificación"""
     await bot.wait_until_ready()
     log_with_timestamp("🔄 Tarea de verificación inicializada y esperando al bot...")
 
-@check_status.after_loop
+@check_structures.after_loop
 async def after_check_status():
     """Se ejecuta si el loop se detiene"""
     if check_status.failed():
