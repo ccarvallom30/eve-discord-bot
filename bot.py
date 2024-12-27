@@ -64,7 +64,7 @@ class EVEAuth:
         log_with_timestamp("🔑 Generando URL de autenticación")
         return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     
-    def exchange_code(self, code):
+    async def exchange_code(self, code):
         """Intercambia el código por tokens"""
         try:
             auth_url = 'https://login.eveonline.com/v2/oauth/token'
@@ -270,7 +270,7 @@ async def check_structures():
 
 # Configurar las rutas de Flask
 @app.route('/callback')
-def callback():
+async def callback():
     """Ruta para manejar el callback de EVE Online"""
     code = request.args.get('code')
     state = request.args.get('state')
@@ -284,7 +284,7 @@ def callback():
     if auth is None:
         return "No se ha iniciado el proceso de autenticación.", 400
 
-    success = auth.exchange_code(code)
+    success = await auth.exchange_code(code)
     if success:
         return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
     else:
