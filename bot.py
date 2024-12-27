@@ -391,26 +391,29 @@ class EVECommands(commands.Cog):
                       "4. Usa !structures para ver el estado de todas las estructuras")
 
 # Tareas programadas
-@tasks.loop(minutes=2)
-async def check_status():
-    """Verifica el estado de las estructuras periódicamente"""
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_with_timestamp("================================================")
-    log_with_timestamp("🔄 INICIANDO VERIFICACIÓN PERIÓDICA DE ESTRUCTURAS")
-    
-    if not auth:
-        log_with_timestamp("❌ Error: Variable auth no inicializada")
-        return
-        
-    if not auth.access_token:
-        log_with_timestamp("❌ Error: No hay access token disponible")
-        return
-        
+@tasks.loop(seconds=120)  # Cambiado de minutes=2 a seconds=120 para mayor precisión
+async def check_structures():
+    """Función para verificar el estado de las estructuras"""
     try:
+        log_with_timestamp("\n=== VERIFICACIÓN DE ESTRUCTURAS ===")
+        
+        if not auth:
+            log_with_timestamp("❌ Error: Bot no autenticado - Usa !auth primero")
+            return
+            
+        if not auth.access_token:
+            log_with_timestamp("❌ Error: No hay access token - Usa !auth primero")
+            return
+            
         log_with_timestamp("✅ Bot autenticado, procediendo con la verificación")
         monitor = EVEStructureMonitor(auth)
+        
+        # Obtener y verificar estructuras
+        structures = await monitor.get_corp_structures()
+        log_with_timestamp(f"📊 Estructuras encontradas: {len(structures)}")
+        
         alerts = await monitor.check_structures_status()
-
+        
         if alerts:
             channel = bot.get_channel(CHANNEL_ID)
             if channel:
@@ -421,14 +424,27 @@ async def check_status():
                 log_with_timestamp(f"❌ Error: No se pudo encontrar el canal con ID {CHANNEL_ID}")
         else:
             log_with_timestamp("✅ No hay alertas que reportar")
-            
-        log_with_timestamp("✅ Verificación completada")
-        log_with_timestamp("================================================")
+        
+        log_with_timestamp("=== VERIFICACIÓN COMPLETADA ===\n")
             
     except Exception as e:
-        log_with_timestamp(f"❌ Error en check_status: {str(e)}")
+        log_with_timestamp(f"❌ Error verificando estructuras: {str(e)}")
         import traceback
         log_with_timestamp(traceback.format_exc())
+
+@check_status.before_loop
+async def before_check_status():
+    """Se ejecuta antes de iniciar el loop de verificación"""
+    await bot.wait_until_ready()
+    log_with_timestamp("🔄 Tarea de verificación inicializada y esperando al bot...")
+
+@check_status.after_loop
+async def after_check_status():
+    """Se ejecuta si el loop se detiene"""
+    if check_status.failed():
+        log_with_timestamp(f"❌ La tarea de verificación se detuvo debido a un error: {check_status.get_task().exception()}")
+    else:
+        log_with_timestamp("⚠️ La tarea de verificación se ha detenido")
 
 def keep_alive():
     """Función para mantener el servicio activo"""
@@ -467,25 +483,28 @@ def run_flask():
 @bot.event
 async def on_ready():
     """Evento que se ejecuta cuando el bot está listo"""
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    log_with_timestamp(f"\n🚀 [{current_time}] ¡Bot conectado como {bot.user.name}!")
-    log_with_timestamp(f"🆔 [{current_time}] ID del bot: {bot.user.id}")
+    log_with_timestamp("\n=== BOT INICIADO ===")
+    log_with_timestamp(f"🚀 Bot conectado como {bot.user.name}")
+    log_with_timestamp(f"🆔 ID del bot: {bot.user.id}")
     
     try:
         await bot.add_cog(EVECommands(bot))
-        log_with_timestamp(f"✅ [{current_time}] Comandos EVE registrados correctamente")
+        log_with_timestamp("✅ Comandos EVE registrados correctamente")
+        
+        # Primera verificación de estructuras
+        await asyncio.sleep(5)  # Esperar 5 segundos para asegurar que todo está inicializado
+        log_with_timestamp("🔄 Ejecutando verificación inicial...")
+        await check_structures()
+        
+        log_with_timestamp("📋 Comandos disponibles:")
+        for command in bot.commands:
+            log_with_timestamp(f"  - !{command.name}")
+            
+        log_with_timestamp("=== INICIALIZACIÓN COMPLETADA ===\n")
     except Exception as e:
-        log_with_timestamp(f"❌ [{current_time}] Error registrando comandos: {str(e)}")
-    
-    if not check_status.is_running():
-        log_with_timestamp(f"▶️ [{current_time}] Iniciando tarea de verificación...")
-        check_status.start()
-    else:
-        log_with_timestamp(f"ℹ️ [{current_time}] La tarea de verificación ya está en ejecución")
-    
-    log_with_timestamp(f"📋 [{current_time}] Comandos registrados:")
-    for command in bot.commands:
-        log_with_timestamp(f"  - !{command.name}")
+        log_with_timestamp(f"❌ Error en inicialización: {str(e)}")
+        import traceback
+        log_with_timestamp(traceback.format_exc())
 
 # Ejecución principal
 if __name__ == '__main__':
