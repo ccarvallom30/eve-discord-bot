@@ -432,19 +432,7 @@ async def check_structures():
         import traceback
         log_with_timestamp(traceback.format_exc())
 
-@check_status.before_loop
-async def before_check_status():
-    """Se ejecuta antes de iniciar el loop de verificación"""
-    await bot.wait_until_ready()
-    log_with_timestamp("🔄 Tarea de verificación inicializada y esperando al bot...")
 
-@check_status.after_loop
-async def after_check_status():
-    """Se ejecuta si el loop se detiene"""
-    if check_status.failed():
-        log_with_timestamp(f"❌ La tarea de verificación se detuvo debido a un error: {check_status.get_task().exception()}")
-    else:
-        log_with_timestamp("⚠️ La tarea de verificación se ha detenido")
 
 def keep_alive():
     """Función para mantener el servicio activo y verificar estructuras"""
