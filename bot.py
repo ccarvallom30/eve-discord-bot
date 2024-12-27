@@ -101,7 +101,7 @@ class EVEAuth:
             data = {
                 'grant_type': 'authorization_code',
                 'code': code,
-                'redirect_uri': 'http://localhost/callback'
+                'redirect_uri': 'https://eve-discord-bot.onrender.com'
             }
             
             response = requests.post(auth_url, headers=headers, data=data)
