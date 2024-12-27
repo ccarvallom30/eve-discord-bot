@@ -10,6 +10,11 @@ import string
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
 import threading
+import logging
+
+# Configurar el logger
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger()
 
 # Cargar variables de entorno
 load_dotenv()
@@ -38,20 +43,14 @@ def callback():
     """Ruta para manejar el callback de EVE Online"""
     code = request.args.get('code')
     state = request.args.get('state')
-
+    
     if not code or not state:
         return "Faltan parámetros 'code' o 'state'.", 400
 
-    # Verifica que el estado sea el correcto
     if state != auth_state.get('state'):
         return "El parámetro 'state' no es válido o ha caducado.", 400
 
-    # Crear una instancia de EVEAuth para intercambiar el código
-    auth = EVEAuth()
-
-    # Intercambiar el código por el access_token
     success = auth.exchange_code(code)
-
     if success:
         return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
     else:
@@ -104,10 +103,12 @@ class EVEAuth:
                 tokens = response.json()
                 self.access_token = tokens['access_token']
                 self.refresh_token = tokens['refresh_token']
+                logger.info("Autenticación exitosa.")
                 return True
+            logger.error(f"Error en la autenticación: {response.status_code} - {response.text}")
             return False
         except Exception as e:
-            print(f"Error en autenticación: {str(e)}")
+            logger.error(f"Error en autenticación: {str(e)}")
             return False
 
 class EVEStructureMonitor:
@@ -119,23 +120,29 @@ class EVEStructureMonitor:
     async def get_corp_structures(self):
         """Obtener todas las estructuras de la corporación"""
         if not self.auth.access_token:
+            logger.error("No se encuentra el access_token para la autenticación.")
             return []
-            
+        
         try:
+            logger.info("Solicitando las estructuras de la corporación...")
             headers = {'Authorization': f'Bearer {self.auth.access_token}'}
             response = requests.get(
                 f'{ESI_BASE_URL}/corporations/{CORP_ID}/structures/',
                 headers=headers
             )
             if response.status_code == 200:
+                logger.info(f"Estructuras obtenidas exitosamente: {response.json()}")
                 return response.json()
+            else:
+                logger.error(f"Error al obtener estructuras. Código de respuesta: {response.status_code}")
             return []
         except Exception as e:
-            print(f"Error obteniendo estructuras: {str(e)}")
+            logger.error(f"Error obteniendo estructuras: {str(e)}")
             return []
 
     async def check_structures_status(self):
         """Verificar el estado de todas las estructuras"""
+        logger.info("Verificando el estado de las estructuras...")
         structures = await self.get_corp_structures()
         alerts = []
 
@@ -148,8 +155,7 @@ class EVEStructureMonitor:
                 'shield_percentage': structure.get('shield_percentage', 100)
             }
 
-            # Verifica que el campo `under_attack` está presente
-            print(f"Estado de la estructura {structure_id}: {current_status}")  # Verifica los datos de la estructura
+            logger.info(f"Estado de la estructura {structure_id}: {current_status}")  # Log de estado
 
             if current_status['under_attack']:
                 alerts.append(f"¡ALERTA! Estructura {structure_id} está bajo ataque!")
@@ -167,14 +173,17 @@ class EVEStructureMonitor:
 
             self.structures_status[structure_id] = current_status
 
+        if alerts:
+            logger.info(f"Alertas generadas: {alerts}")
+        else:
+            logger.info("No se generaron alertas.")
         return alerts
 
 # Configura las tareas programadas y los comandos del bot
 
 @bot.event
 async def on_ready():
-    print(f'¡Bot conectado como {bot.user.name}!')
-
+    logger.info(f'¡Bot conectado como {bot.user.name}!')
     # Iniciar tareas en segundo plano
     check_status.start()
 
@@ -190,22 +199,14 @@ async def check_status():
             for alert in alerts:
                 await channel.send(alert)
     else:
-        print("El bot no está autenticado, no se pueden verificar las estructuras.")
+        logger.warning("El bot no está autenticado, no se pueden verificar las estructuras.")
 
 @bot.command()
-async def setup(ctx):
+async def auth(ctx):
     """Comando para iniciar la autenticación en EVE Online"""
-    # Verificar si el enlace de autenticación ya fue enviado
-    if hasattr(ctx, 'auth_url_sent') and ctx.auth_url_sent:
-        await ctx.send("El enlace de autorización ya ha sido enviado.")
-        return
-    
     auth = EVEAuth()
     auth_url = await auth.get_auth_url()
     await ctx.send(f"Para autorizar el bot, haz clic en este enlace: {auth_url}")
-    
-    # Marcar como enviado para evitar duplicados
-    ctx.auth_url_sent = True
 
 # Ejecutar el bot en un hilo separado para permitir que Flask funcione
 def run_discord_bot():
