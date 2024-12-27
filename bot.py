@@ -198,6 +198,9 @@ class EVEStructureMonitor:
         """Verificar el estado de todas las estructuras"""
         log_with_timestamp("⏰ Iniciando verificación de estructuras...")
         structures = await self.get_corp_structures()
+        if not structures:
+            return []
+
         log_with_timestamp(f"📊 Número de estructuras encontradas: {len(structures)}")
         alerts = []
 
@@ -238,7 +241,7 @@ class EVEStructureMonitor:
 
             self.structures_status[structure_id] = current_status
 
-        return alerts
+        return alerts, structures
 
 async def check_structures():
     """Función para verificar el estado de las estructuras"""
