@@ -117,40 +117,66 @@ class EVEStructureMonitor:
         self.structures_status = {}
         self.last_check_time = None
 
+    async def get_structure_name(self, structure_id):
+        """Obtener el nombre de una estructura"""
+        if not self.auth.access_token:
+            return "Nombre desconocido"
+            
+        try:
+            headers = {'Authorization': f'Bearer {self.auth.access_token}'}
+            url = f'{ESI_BASE_URL}/universe/structures/{structure_id}/'
+            
+            response = requests.get(url, headers=headers)
+            
+            if response.status_code == 200:
+                structure_info = response.json()
+                return structure_info.get('name', 'Nombre desconocido')
+            else:
+                print(f"❌ Error obteniendo nombre de estructura {structure_id}: Status code {response.status_code}")
+                return "Nombre desconocido"
+        except Exception as e:
+            print(f"❌ Error obteniendo nombre de estructura {structure_id}: {str(e)}")
+            return "Nombre desconocido"
+
     async def get_corp_structures(self):
         """Obtener todas las estructuras de la corporación"""
         if not self.auth.access_token:
-            print("❌ Error: No hay access token disponible")
+            log_with_timestamp("❌ Error: No hay access token disponible")
             return []
             
         try:
-            print(f"📡 Intentando obtener estructuras para la corporación {CORP_ID}")
+            log_with_timestamp(f"📡 Intentando obtener estructuras para la corporación {CORP_ID}")
             headers = {'Authorization': f'Bearer {self.auth.access_token}'}
             
             url = f'{ESI_BASE_URL}/corporations/{CORP_ID}/structures/'
-            print(f"🌐 Haciendo request a: {url}")
+            log_with_timestamp(f"🌐 Haciendo request a: {url}")
             
             response = requests.get(url, headers=headers)
-            print(f"📥 Código de respuesta: {response.status_code}")
-            print(f"📄 Contenido de respuesta: {response.text[:200]}...")
+            log_with_timestamp(f"📥 Código de respuesta: {response.status_code}")
             
             if response.status_code == 401:  # Token expirado
-                print("🔄 Token expirado, intentando refrescar...")
+                log_with_timestamp("🔄 Token expirado, intentando refrescar...")
                 if await self.auth.refresh_access_token():
                     headers = {'Authorization': f'Bearer {self.auth.access_token}'}
                     response = requests.get(url, headers=headers)
-                    print(f"📥 Código de respuesta después de refrescar: {response.status_code}")
+                    log_with_timestamp(f"📥 Código de respuesta después de refrescar: {response.status_code}")
             
             if response.status_code == 200:
                 structures = response.json()
-                print(f"✅ Estructuras obtenidas exitosamente. Cantidad: {len(structures)}")
+                log_with_timestamp(f"✅ Estructuras obtenidas exitosamente. Cantidad: {len(structures)}")
+                
+                # Obtener nombres para todas las estructuras
+                for structure in structures:
+                    structure['name'] = await self.get_structure_name(structure['structure_id'])
+                    log_with_timestamp(f"📝 Estructura {structure['structure_id']}: {structure['name']}")
+                
                 return structures
             else:
-                print(f"❌ Error obteniendo estructuras: Status code {response.status_code}")
-                print(f"Mensaje de error: {response.text}")
+                log_with_timestamp(f"❌ Error obteniendo estructuras: Status code {response.status_code}")
+                log_with_timestamp(f"Mensaje de error: {response.text}")
             return []
         except Exception as e:
-            print(f"❌ Error en get_corp_structures: {str(e)}")
+            log_with_timestamp(f"❌ Error en get_corp_structures: {str(e)}")
             return []
 
     async def check_structures_status(self):
@@ -166,30 +192,33 @@ class EVEStructureMonitor:
                 'state': structure.get('state'),
                 'fuel_expires': structure.get('fuel_expires'),
                 'under_attack': structure.get('under_attack', False),
-                'shield_percentage': structure.get('shield_percentage', 100)
+                'shield_percentage': structure.get('shield_percentage', None)  # Cambiado de 100 a None
             }
 
             print(f"🏢 Estructura {structure_id}:")
             print(f"   - Estado: {current_status['state']}")
             print(f"   - Combustible expira: {current_status['fuel_expires']}")
             print(f"   - Bajo ataque: {'🚨 SÍ' if current_status['under_attack'] else '✅ NO'}")
-            print(f"   - Escudos: {current_status['shield_percentage']}%")
+            if current_status['shield_percentage'] is not None:
+                print(f"   - Escudos: {current_status['shield_percentage']:.1f}%")
+            else:
+                print("   - Escudos: No disponible")
 
             if current_status['under_attack']:
-                alerts.append(f"🚨 ¡ALERTA! Estructura {structure_id} está bajo ataque!")
+                alerts.append(f"🚨 ¡ALERTA! {structure.get('name', 'Estructura')} está bajo ataque!")
 
             if structure_id in self.structures_status:
                 old_status = self.structures_status[structure_id]
                 
                 if current_status['under_attack'] and not old_status.get('under_attack', False):
-                    alerts.append(f"🚨 ¡ALERTA! Estructura {structure_id} está bajo ataque!")
+                    alerts.append(f"🚨 ¡ALERTA! {structure.get('name', 'Estructura')} está bajo ataque!")
 
                 if current_status['fuel_expires']:
                     fuel_time = datetime.datetime.strptime(current_status['fuel_expires'], '%Y-%m-%dT%H:%M:%SZ')
                     time_remaining = fuel_time - datetime.datetime.utcnow()
                     
                     if time_remaining < datetime.timedelta(days=2):
-                        alerts.append(f"⚠️ Estructura {structure_id} tiene poco combustible! Se acaba en {fuel_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                        alerts.append(f"⚠️ {structure.get('name', 'Estructura')} tiene poco combustible! Se acaba en {fuel_time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
 
             self.structures_status[structure_id] = current_status
 
@@ -285,12 +314,18 @@ class EVECommands(commands.Cog):
                 else:
                     fuel_status = "❓ N/A"
 
+                # Manejar el valor de los escudos
+                shield_value = structure.get('shield_percentage')
+                shield_display = f"{shield_value:.1f}" if shield_value is not None else "No disponible"
+                shield_emoji = "🛡️" if shield_value is not None else "❓"
+
                 status_message += (
-                    f"🏢 **Estructura {structure.get('structure_id')}**\n"
+                    f"🏢 **{structure.get('name', 'Estructura sin nombre')}**\n"
+                    f"▫️ ID: {structure.get('structure_id')}\n"
                     f"▫️ Estado: {structure.get('state', 'desconocido')}\n"
                     f"▫️ Combustible restante: {fuel_status}\n"
                     f"▫️ Bajo ataque: {'🚨 SÍ' if structure.get('under_attack', False) else '✅ NO'}\n"
-                    f"▫️ Escudos: {structure.get('shield_percentage', 'N/A')}%\n\n"
+                    f"▫️ {shield_emoji} Escudos: {shield_display}\n\n"
                 )
 
             # Dividir el mensaje si es muy largo (límite de Discord es 2000 caracteres)
@@ -306,40 +341,48 @@ class EVECommands(commands.Cog):
             await ctx.send(f"❌ Error obteniendo estado de estructuras: {str(e)}")
 
 # Tareas programadas
+def log_with_timestamp(message):
+    """Función auxiliar para imprimir logs con timestamp"""
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{current_time}] {message}")
+
 @tasks.loop(minutes=2)
 async def check_status():
     """Verifica el estado de las estructuras periódicamente"""
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n⏰ [{current_time}] Iniciando verificación periódica de estructuras...")
+    log_with_timestamp("================================================")
+    log_with_timestamp("🔄 INICIANDO VERIFICACIÓN PERIÓDICA DE ESTRUCTURAS")
     
     if not auth:
-        print(f"❌ [{current_time}] Error: Variable auth no inicializada")
+        log_with_timestamp("❌ Error: Variable auth no inicializada")
         return
         
     if not auth.access_token:
-        print(f"❌ [{current_time}] Error: No hay access token disponible")
+        log_with_timestamp("❌ Error: No hay access token disponible")
         return
         
     try:
-        print(f"✅ [{current_time}] Bot autenticado, procediendo con la verificación")
+        log_with_timestamp("✅ Bot autenticado, procediendo con la verificación")
         monitor = EVEStructureMonitor(auth)
         alerts = await monitor.check_structures_status()
 
         if alerts:
             channel = bot.get_channel(CHANNEL_ID)
             if channel:
-                print(f"📢 [{current_time}] Enviando {len(alerts)} alertas al canal")
+                log_with_timestamp(f"📢 Enviando {len(alerts)} alertas al canal")
                 for alert in alerts:
                     await channel.send(alert)
             else:
-                print(f"❌ [{current_time}] Error: No se pudo encontrar el canal con ID {CHANNEL_ID}")
+                log_with_timestamp(f"❌ Error: No se pudo encontrar el canal con ID {CHANNEL_ID}")
         else:
-            print(f"✅ [{current_time}] No hay alertas que reportar")
+            log_with_timestamp("✅ No hay alertas que reportar")
+        
+        log_with_timestamp("✅ Verificación completada")
+        log_with_timestamp("================================================")
             
     except Exception as e:
-        print(f"❌ [{current_time}] Error en check_status: {str(e)}")
+        log_with_timestamp(f"❌ Error en check_status: {str(e)}")
         import traceback
-        print(traceback.format_exc())
+        log_with_timestamp(traceback.format_exc())
 
 @check_status.before_loop
 async def before_check_status():
