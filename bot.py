@@ -81,7 +81,7 @@ class EVEAuth:
         # Almacenamos el estado generado para usarlo en el callback
         auth_state['state'] = state
         
-        return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=http://localhost/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
+        return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     
     async def exchange_code(self, code):
         """Intercambia el código por tokens"""
