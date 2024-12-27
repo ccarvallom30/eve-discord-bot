@@ -1,26 +1,36 @@
 import discord
 import os
 import requests
+import random
+import string
 from discord.ext import commands
 from flask import Flask, request
 import threading
+import webbrowser
 
-# Crear un objeto de intents con los permisos adecuados
-intents = discord.Intents.default()  # Esto habilita los intents básicos
-intents.message_content = True  # Habilita el permiso para leer el contenido de los mensajes
-intents.messages = True  # Habilita el permiso para manejar eventos de mensajes (como cuando se envía un mensaje)
-
-# Crear el bot con los intents habilitados
+# Configuración de tu bot
+intents = discord.Intents.default()
+intents.message_content = True  # Para leer el contenido del mensaje
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Configuración de EVE Online
-CLIENT_ID = os.getenv("CLIENT_ID")  # Este será el Client ID de la app de EVE Online
-CLIENT_SECRET = os.getenv("CLIENT_SECRET")  # El Client Secret
-REDIRECT_URI = os.getenv("REDIRECT_URI")  # La URL de redirección de la aplicación
+CLIENT_ID = os.getenv("CLIENT_ID")
+CLIENT_SECRET = os.getenv("CLIENT_SECRET")
+REDIRECT_URI = os.getenv("REDIRECT_URI")
 SCOPE = "publicData characterData esi-universe.read_structures.v1"  # Los permisos necesarios
 
+# Almacenar el valor de "state"
+state_value = None
+
+# Función para generar un estado aleatorio
+def generate_state():
+    return ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+
 # URL de autorización para OAuth2
-AUTH_URL = f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri={REDIRECT_URI}&client_id={CLIENT_ID}&scope={SCOPE}"
+def get_auth_url():
+    global state_value
+    state_value = generate_state()  # Generamos un nuevo valor de state
+    return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri={REDIRECT_URI}&client_id={CLIENT_ID}&scope={SCOPE}&state={state_value}"
 
 # Crear instancia de Flask
 app = Flask(__name__)
@@ -37,13 +47,20 @@ async def auth(ctx):
         await ctx.send("Las credenciales no están configuradas correctamente. Usa `!setup` para configurarlas.")
         return
     
-    # Enviar el enlace de autorización en el chat de Discord
-    await ctx.send(f"Por favor autoriza el acceso a tu cuenta de EVE Online haciendo clic en el siguiente enlace: {AUTH_URL}")
+    auth_url = get_auth_url()  # Obtener la URL de autorización con el parámetro state
+    await ctx.send(f"Por favor autoriza el acceso a tu cuenta de EVE Online haciendo clic en el siguiente enlace: {auth_url}")
+    webbrowser.open(auth_url)
 
 # Ruta de callback en Flask para manejar la respuesta de OAuth2
 @app.route("/callback")
 def callback():
     authorization_code = request.args.get("code")
+    state = request.args.get("state")
+    
+    # Verificar que el valor "state" coincida
+    if state != state_value:
+        return "Error: el parámetro 'state' no coincide."
+    
     if authorization_code:
         data = {
             "grant_type": "authorization_code",
@@ -78,6 +95,7 @@ async def on_ready():
 async def ping(ctx):
     await ctx.send('Pong!')
 
+
 # Función para ejecutar Flask en un hilo separado
 def run_flask():
     app.run(host="0.0.0.0", port=8000)
@@ -87,3 +105,4 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.start()
     bot.run(os.getenv("DISCORD_BOT_TOKEN"))
+
