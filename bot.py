@@ -70,6 +70,12 @@ def callback():
 async def on_ready():
     print(f'Bot conectado como {bot.user}')
 
+# Define el comando !ping
+@bot.command()
+async def ping(ctx):
+    await ctx.send('Pong!')
+
+
 # Función para ejecutar Flask en un hilo separado
 def run_flask():
     app.run(host="0.0.0.0", port=8000)
