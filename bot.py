@@ -195,9 +195,17 @@ async def check_status():
 @bot.command()
 async def setup(ctx):
     """Comando para iniciar la autenticación en EVE Online"""
+    # Verificar si el enlace de autenticación ya fue enviado
+    if hasattr(ctx, 'auth_url_sent') and ctx.auth_url_sent:
+        await ctx.send("El enlace de autorización ya ha sido enviado.")
+        return
+    
     auth = EVEAuth()
     auth_url = await auth.get_auth_url()
     await ctx.send(f"Para autorizar el bot, haz clic en este enlace: {auth_url}")
+    
+    # Marcar como enviado para evitar duplicados
+    ctx.auth_url_sent = True
 
 # Ejecutar el bot en un hilo separado para permitir que Flask funcione
 def run_discord_bot():
