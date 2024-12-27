@@ -1,7 +1,6 @@
 import discord
 from discord.ext import commands, tasks
 import requests
-import json
 import datetime
 import asyncio
 import os
@@ -34,24 +33,18 @@ app = Flask(__name__)
 # Variable para almacenar el estado único
 auth_state = {}
 
-@app.route('/')
-def home():
-    return "Bot de Discord funcionando"
-
 @app.route('/callback')
 def callback():
     """Ruta para manejar el callback de EVE Online"""
     code = request.args.get('code')
     state = request.args.get('state')
-
+    
     if not code or not state:
         return "Faltan parámetros 'code' o 'state'.", 400
 
-    # Verificar que el 'state' recibido coincide con el 'state' almacenado
     if state != auth_state.get('state'):
         return "El parámetro 'state' no es válido o ha caducado.", 400
 
-    # Si el 'state' es válido, intercambiamos el código por un token
     success = auth.exchange_code(code)
     if success:
         return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
@@ -81,10 +74,6 @@ class EVEAuth:
         # Almacenamos el estado generado para usarlo en el callback
         auth_state['state'] = state
 
-        # Verificar que CLIENT_ID se ha cargado correctamente
-        print(f"EVE_CLIENT_ID: {CLIENT_ID}")  # Esta línea imprime el CLIENT_ID
-
-        # Ahora generamos la URL de autenticación
         return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     
     async def exchange_code(self, code):
@@ -149,15 +138,22 @@ class EVEStructureMonitor:
             current_status = {
                 'state': structure.get('state'),
                 'fuel_expires': structure.get('fuel_expires'),
-                'under_attack': structure.get('under_attack', False)
+                'under_attack': structure.get('under_attack', False),
+                'shield_percentage': structure.get('shield_percentage', 100)
             }
+
+            # Verifica que el campo `under_attack` está presente
+            print(f"Estado de la estructura {structure_id}: {current_status}")  # Verifica los datos de la estructura
+
+            if current_status['under_attack']:
+                alerts.append(f"¡ALERTA! Estructura {structure_id} está bajo ataque!")
 
             if structure_id in self.structures_status:
                 old_status = self.structures_status[structure_id]
                 
                 if current_status['under_attack'] and not old_status.get('under_attack', False):
                     alerts.append(f"¡ALERTA! Estructura {structure_id} está bajo ataque!")
-                
+
                 if current_status['fuel_expires']:
                     fuel_time = datetime.datetime.strptime(current_status['fuel_expires'], '%Y-%m-%dT%H:%M:%SZ')
                     if fuel_time - datetime.datetime.utcnow() < datetime.timedelta(days=2):
@@ -167,112 +163,40 @@ class EVEStructureMonitor:
 
         return alerts
 
-# Inicializar sistemas
-auth = EVEAuth()
-monitor = EVEStructureMonitor(auth)
-
-@bot.command(name='setup')
-async def setup(ctx):
-    """Comando para iniciar la configuración del bot"""
-    auth_url = await auth.get_auth_url()
-    embed = discord.Embed(
-        title="Configuración del Bot de EVE",
-        description="Para configurar el bot, sigue estos pasos:",
-        color=discord.Color.blue()
-    )
-    embed.add_field(
-        name="1. Autenticación",
-        value=f"Haz clic [aquí]({auth_url}) para autorizar el bot",
-        inline=False
-    )
-    embed.add_field(
-        name="2. Copia el código",
-        value="Después de autorizar, serás redirigido a una URL. Copia el código que aparece después de '?code=' en la URL",
-        inline=False
-    )
-    embed.add_field(
-        name="3. Completa la configuración",
-        value="Usa el comando `!auth <código>` con el código que copiaste",
-        inline=False
-    )
-    await ctx.send(embed=embed)
-
-@bot.command(name='auth')
-async def authenticate(ctx, code: str):
-    """Comando para completar la autenticación"""
-    success = await auth.exchange_code(code)
-    if success:
-        await ctx.send("✅ ¡Autenticación exitosa! El bot está listo para monitorear estructuras.")
-        check_structures.start()
-    else:
-        await ctx.send("❌ Error en la autenticación. Por favor intenta nuevamente con `!setup`")
-
-@tasks.loop(minutes=1)
-async def check_structures():
-    """Verificar estado de las estructuras cada minuto"""
-    if not auth.access_token:
-        return
-
-    channel = bot.get_channel(CHANNEL_ID)
-    if not channel:
-        print("No se pudo encontrar el canal")
-        return
-
-    alerts = await monitor.check_structures_status()
-    
-    for alert in alerts:
-        embed = discord.Embed(
-            title="Estado de Estructuras",
-            description=alert,
-            color=discord.Color.red(),
-            timestamp=datetime.datetime.utcnow()
-        )
-        await channel.send(embed=embed)
-        if "bajo ataque" in alert:
-            await channel.send("@everyone ¡Atención! ¡Estructura bajo ataque!")
+# Configura las tareas programadas y los comandos del bot
 
 @bot.event
 async def on_ready():
-    """Evento cuando el bot está listo"""
-    print(f'Bot conectado como {bot.user.name}')
+    print(f'¡Bot conectado como {bot.user.name}!')
+    # Iniciar tareas en segundo plano
+    check_status.start()
 
-@bot.command(name='structures')
-async def structures(ctx):
-    """Comando para ver estado de todas las estructuras"""
-    if not auth.access_token:
-        await ctx.send("❌ Bot no autenticado. Usa `!setup` primero.")
-        return
+@tasks.loop(minutes=10)  # Verificar cada 10 minutos
+async def check_status():
+    """Verifica el estado de las estructuras cada 10 minutos"""
+    if auth.access_token:
+        monitor = EVEStructureMonitor(auth)
+        alerts = await monitor.check_structures_status()
 
-    structures = await monitor.get_corp_structures()
-    
-    if not structures:
-        await ctx.send("No se encontraron estructuras o no hay acceso.")
-        return
+        if alerts:
+            channel = bot.get_channel(CHANNEL_ID)
+            for alert in alerts:
+                await channel.send(alert)
+    else:
+        print("El bot no está autenticado, no se pueden verificar las estructuras.")
 
-    embed = discord.Embed(
-        title="Estado de Estructuras",
-        color=discord.Color.blue(),
-        timestamp=datetime.datetime.utcnow()
-    )
+@bot.command()
+async def auth(ctx):
+    """Comando para iniciar la autenticación en EVE Online"""
+    auth = EVEAuth()
+    auth_url = await auth.get_auth_url()
+    await ctx.send(f"Para autorizar el bot, haz clic en este enlace: {auth_url}")
 
-    for structure in structures:
-        status = "✅ Normal"
-        if structure.get('under_attack'):
-            status = "🚨 ¡Bajo ataque!"
-        elif structure.get('fuel_expires'):
-            fuel_time = datetime.datetime.strptime(structure['fuel_expires'], '%Y-%m-%dT%H:%M:%SZ')
-            if fuel_time - datetime.datetime.utcnow() < datetime.timedelta(days=2):
-                status = "⚠️ Poco combustible"
+# Ejecutar el bot en un hilo separado para permitir que Flask funcione
+def run_discord_bot():
+    bot.run(TOKEN)
 
-        embed.add_field(
-            name=f"Estructura {structure['structure_id']}",
-            value=f"Estado: {status}\nCombustible restante: {fuel_time if 'fuel_expires' in structure else 'Desconocido'}",
-            inline=False
-        )
-    
-    await ctx.send(embed=embed)
-
-# Iniciar el bot y el servidor Flask en hilos separados
+# Ejecutar el bot y el servidor Flask en paralelo
 if __name__ == '__main__':
     threading.Thread(target=run_flask).start()
-    bot.run(TOKEN)
+    run_discord_bot()
