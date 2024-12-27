@@ -23,9 +23,8 @@ CLIENT_SECRET = os.getenv('EVE_CLIENT_SECRET')
 ESI_BASE_URL = 'https://esi.evetech.net/latest'
 
 # Configurar intents del bot
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+intents = discord.Intents.all()  # Habilitar todos los intents
+bot = commands.Bot(command_prefix='!', intents=intents, case_insensitive=True)  # Hacer los comandos case-insensitive
 
 # Crear una instancia de Flask para abrir un puerto
 app = Flask(__name__)
@@ -45,7 +44,7 @@ class EVEAuth:
     
     async def get_auth_url(self):
         """Genera URL de autenticación"""
-        scopes = '&esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
+        scopes = 'esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
         state = self.generate_state()
         auth_state['state'] = state
 
@@ -208,7 +207,32 @@ def callback():
 async def on_ready():
     """Evento que se ejecuta cuando el bot está listo"""
     print(f'¡Bot conectado como {bot.user.name}!')
+    print(f'ID del bot: {bot.user.id}')
+    print('Comandos registrados:')
+    for command in bot.commands:
+        print(f'- !{command.name}')
     check_status.start()
+
+@bot.event
+async def on_command_error(ctx, error):
+    """Manejo de errores de comandos"""
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send(f"❌ Comando no encontrado. Los comandos disponibles son: {', '.join(['!' + cmd.name for cmd in bot.commands])}")
+    else:
+        print(f"Error ejecutando comando: {str(error)}")
+        await ctx.send(f"❌ Error ejecutando el comando: {str(error)}")
+
+@bot.event
+async def on_message(message):
+    """Log de mensajes para diagnóstico"""
+    if message.author == bot.user:
+        return
+        
+    print(f"Mensaje recibido: {message.content}")
+    print(f"Autor: {message.author}")
+    print(f"Canal: {message.channel}")
+    
+    await bot.process_commands(message)  # Importante para que los comandos sigan funcionando
 
 @tasks.loop(minutes=2)
 async def check_status():
@@ -246,6 +270,28 @@ async def status_command(ctx):
         await ctx.send("✅ El bot está autenticado y monitoreando estructuras.")
     else:
         await ctx.send("❌ El bot no está autenticado. Usa !authenticate para comenzar.")
+
+@bot.command(name='ping')
+async def ping_command(ctx):
+    """Comando simple para probar si el bot responde"""
+    await ctx.send('pong!')
+
+@bot.command(name='help')
+async def help_command(ctx):
+    """Muestra la lista de comandos disponibles"""
+    commands_list = [f"!{command.name}: {command.help}" for command in bot.commands]
+    help_text = "**Comandos disponibles:**\n" + "\n".join(commands_list)
+    await ctx.send(help_text)
+
+@bot.command(name='auth')
+async def auth_command(ctx):
+    """Alias para el comando authenticate"""
+    await authenticate_command(ctx)
+
+@bot.command(name='setup')
+async def setup_command(ctx):
+    """Comando para configuración inicial"""
+    await ctx.send("Iniciando configuración. Por favor, usa !auth primero para autenticar el bot.")
 
 def run_flask():
     """Función para ejecutar el servidor Flask"""
