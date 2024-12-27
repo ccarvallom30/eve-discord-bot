@@ -473,7 +473,7 @@ if __name__ == '__main__':
     finally:
         # Asegurar una limpieza adecuada
         stop_keep_alive()
-        log_with_timestamp("👋 Servicio finalizado")lock = asyncio.Lock()
+        log_with_timestamp("👋 Servicio finalizado")
     
     @commands.command(name='ping')
     async def ping(self, ctx):
