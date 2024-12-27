@@ -7,23 +7,34 @@ import os
 import base64
 import random
 import string
+import time
+import threading
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
-import threading
 
 # Cargar variables de entorno
 load_dotenv()
 
-# Configuración del bot
+# Configuración del bot y variables globales
 TOKEN = os.getenv('DISCORD_TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', '0'))
 CORP_ID = os.getenv('CORP_ID')
 CLIENT_ID = os.getenv('EVE_CLIENT_ID')
 CLIENT_SECRET = os.getenv('EVE_CLIENT_SECRET')
 ESI_BASE_URL = 'https://esi.evetech.net/latest'
+RENDER_URL = os.getenv('RENDER_URL', 'https://tu-app.onrender.com')  # Asegúrate de configurar esto en las variables de entorno
+
+# Variables de control
+is_service_active = True
+last_ping_time = None
+
+def log_with_timestamp(message):
+    """Función auxiliar para imprimir logs con timestamp"""
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{current_time}] {message}")
 
 # Configurar intents del bot
-intents = discord.Intents.all()  # Habilitar todos los intents
+intents = discord.Intents.all()
 bot = commands.Bot(
     command_prefix='!', 
     intents=intents, 
@@ -225,26 +236,61 @@ class EVEStructureMonitor:
         return alerts
 
 # Rutas de Flask
-@app.route('/callback')
-def callback():
-    """Ruta para manejar el callback de EVE Online"""
-    code = request.args.get('code')
-    state = request.args.get('state')
+# Rutas de Flask para keep-alive
+@app.route('/ping')
+def ping():
+    """Endpoint para mantener el servicio activo"""
+    global last_ping_time
+    current_time = datetime.datetime.now()
+    last_ping_time = current_time
+    log_with_timestamp("📍 Ping recibido - Servicio activo")
+    return "pong", 200
+
+@app.route('/status')
+def status():
+    """Endpoint para verificar el estado del servicio"""
+    global last_ping_time
+    if last_ping_time:
+        last_ping = (datetime.datetime.now() - last_ping_time).total_seconds()
+        return {
+            "status": "active",
+            "last_ping": f"{last_ping:.0f} segundos atrás",
+            "is_service_active": is_service_active
+        }
+    return {
+        "status": "starting",
+        "last_ping": None,
+        "is_service_active": is_service_active
+    }
+
+def keep_alive():
+    """Función para mantener el servicio activo"""
+    global is_service_active
+    log_with_timestamp("🚀 Iniciando sistema keep-alive")
+    ping_count = 0
     
-    if not code or not state:
-        return "Faltan parámetros 'code' o 'state'.", 400
+    while is_service_active:
+        try:
+            response = requests.get(f'{RENDER_URL}/ping')
+            ping_count += 1
+            if response.status_code == 200:
+                # Solo loggeamos cada 10 pings para evitar spam en los logs
+                if ping_count % 10 == 0:
+                    log_with_timestamp(f"✅ Keep-alive funcionando - Pings exitosos: {ping_count}")
+            else:
+                log_with_timestamp(f"⚠️ Keep-alive ping respondió con código: {response.status_code}")
+        except Exception as e:
+            log_with_timestamp(f"❌ Error en keep-alive: {str(e)}")
+            ping_count = 0  # Reiniciamos el contador si hay error
+        
+        # Dormir por 30 segundos
+        time.sleep(30)  # Hacemos ping cada 30 segundos para evitar que el servicio se duerma
 
-    if state != auth_state.get('state'):
-        return "El parámetro 'state' no es válido o ha caducado.", 400
-
-    if auth is None:
-        return "No se ha iniciado el proceso de autenticación.", 400
-
-    success = auth.exchange_code(code)
-    if success:
-        return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
-    else:
-        return "Hubo un error en la autenticación. Intenta de nuevo.", 400
+def stop_keep_alive():
+    """Función para detener el sistema keep-alive de manera segura"""
+    global is_service_active
+    is_service_active = False
+    log_with_timestamp("🛑 Deteniendo sistema keep-alive")
 
 # Configuración de comandos
 class EVECommands(commands.Cog):
@@ -438,8 +484,25 @@ def run_flask():
     """Función para ejecutar el servidor Flask"""
     app.run(host='0.0.0.0', port=8080)
 
-# Ejecución principal
+@app.route('/ping')
+def ping():
+    """Endpoint para mantener el servicio activo"""
+    return "pong", 200
+
+def keep_alive():
+    """Función para mantener el servicio activo haciendo ping cada 14 minutos"""
+    while True:
+        try:
+            requests.get('https://tu-app.onrender.com/ping')
+            time.sleep(840)  # 14 minutos en segundos
+        except Exception as e:
+            print(f"Error en keep_alive: {str(e)}")
+            time.sleep(60)  # Esperar 1 minuto si hay error
+
+# En la parte principal del código
 if __name__ == '__main__':
+    # Iniciar el thread de keep-alive
+    threading.Thread(target=keep_alive, daemon=True).start()
     # Iniciar Flask en un hilo separado
     threading.Thread(target=run_flask).start()
     # Iniciar el bot de Discord
