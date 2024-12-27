@@ -1,4 +1,4 @@
-import discord
+iimport discord
 from discord.ext import commands, tasks
 import requests
 import json
@@ -6,8 +6,10 @@ import datetime
 import asyncio
 import os
 import base64
+import random
+import string
 from dotenv import load_dotenv
-from flask import Flask
+from flask import Flask, request, jsonify
 import threading
 
 # Cargar variables de entorno
@@ -29,9 +31,32 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 # Crear una instancia de Flask para abrir un puerto
 app = Flask(__name__)
 
+# Variable para almacenar el estado único
+auth_state = {}
+
 @app.route('/')
 def home():
     return "Bot de Discord funcionando"
+
+@app.route('/callback')
+def callback():
+    """Ruta para manejar el callback de EVE Online"""
+    code = request.args.get('code')
+    state = request.args.get('state')
+
+    if not code or not state:
+        return "Faltan parámetros 'code' o 'state'.", 400
+
+    # Verificar que el 'state' recibido coincide con el 'state' almacenado
+    if state != auth_state.get('state'):
+        return "El parámetro 'state' no es válido o ha caducado.", 400
+
+    # Si el 'state' es válido, intercambiamos el código por un token
+    success = auth.exchange_code(code)
+    if success:
+        return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
+    else:
+        return "Hubo un error en la autenticación. Intenta de nuevo.", 400
 
 def run_flask():
     # Usar un puerto que Render asigna automáticamente
@@ -44,10 +69,19 @@ class EVEAuth:
         self.access_token = None
         self.refresh_token = None
     
+    def generate_state(self):
+        """Genera un estado único para la autenticación"""
+        return ''.join(random.choices(string.ascii_letters + string.digits, k=16))
+    
     async def get_auth_url(self):
         """Genera URL de autenticación"""
         scopes = 'esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
-        return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=http://localhost&client_id={CLIENT_ID}&scope={scopes}&state=unique123"
+        state = self.generate_state()  # Generamos un valor único para el 'state'
+        
+        # Almacenamos el estado generado para usarlo en el callback
+        auth_state['state'] = state
+        
+        return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=http://localhost/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     
     async def exchange_code(self, code):
         """Intercambia el código por tokens"""
@@ -63,7 +97,7 @@ class EVEAuth:
             data = {
                 'grant_type': 'authorization_code',
                 'code': code,
-                'redirect_uri': 'http://localhost'
+                'redirect_uri': 'http://localhost/callback'
             }
             
             response = requests.post(auth_url, headers=headers, data=data)
@@ -238,6 +272,3 @@ if __name__ == "__main__":
     # Iniciar Flask en un hilo separado
     thread = threading.Thread(target=run_flask)
     thread.start()
-
-    # Arrancar el bot de Discord
-    bot.run(TOKEN)
