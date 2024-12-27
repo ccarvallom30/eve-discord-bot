@@ -21,6 +21,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
+import os
+import sys
+if 'PORT' not in os.environ:
+    os.environ['PORT'] = '5000'  # Puerto predeterminado
 class EVEAuth:
     def __init__(self):
         self.access_token = None
