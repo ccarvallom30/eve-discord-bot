@@ -22,11 +22,13 @@ CORP_ID = os.getenv('CORP_ID')
 CLIENT_ID = os.getenv('EVE_CLIENT_ID')
 CLIENT_SECRET = os.getenv('EVE_CLIENT_SECRET')
 ESI_BASE_URL = 'https://esi.evetech.net/latest'
-RENDER_URL = os.getenv('RENDER_URL', 'https://tu-app.onrender.com')  # Asegúrate de configurar esto en las variables de entorno
+RENDER_URL = os.getenv('RENDER_URL', 'https://tu-app.onrender.com')
 
 # Variables de control
 is_service_active = True
 last_ping_time = None
+auth_state = {}
+auth = None
 
 def log_with_timestamp(message):
     """Función auxiliar para imprimir logs con timestamp"""
@@ -45,10 +47,6 @@ bot = commands.Bot(
 # Crear una instancia de Flask para abrir un puerto
 app = Flask(__name__)
 
-# Variables globales para autenticación
-auth_state = {}
-auth = None
-
 class EVEAuth:
     def __init__(self):
         self.access_token = None
@@ -63,7 +61,7 @@ class EVEAuth:
         scopes = 'esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
         state = self.generate_state()
         auth_state['state'] = state
-
+        log_with_timestamp("🔑 Generando URL de autenticación")
         return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     
     def exchange_code(self, code):
@@ -83,15 +81,18 @@ class EVEAuth:
                 'redirect_uri': 'https://eve-discord-bot.onrender.com/callback'
             }
             
+            log_with_timestamp("🔄 Intercambiando código por tokens")
             response = requests.post(auth_url, headers=headers, data=data)
             if response.status_code == 200:
                 tokens = response.json()
                 self.access_token = tokens['access_token']
                 self.refresh_token = tokens['refresh_token']
+                log_with_timestamp("✅ Tokens obtenidos exitosamente")
                 return True
+            log_with_timestamp(f"❌ Error en exchange_code: {response.status_code}")
             return False
         except Exception as e:
-            print(f"Error en autenticación: {str(e)}")
+            log_with_timestamp(f"❌ Error en exchange_code: {str(e)}")
             return False
 
     async def refresh_access_token(self):
@@ -110,16 +111,19 @@ class EVEAuth:
                 'refresh_token': self.refresh_token
             }
             
+            log_with_timestamp("🔄 Refrescando access token")
             response = requests.post(auth_url, headers=headers, data=data)
             if response.status_code == 200:
                 tokens = response.json()
                 self.access_token = tokens['access_token']
                 if 'refresh_token' in tokens:
                     self.refresh_token = tokens['refresh_token']
+                log_with_timestamp("✅ Token refrescado exitosamente")
                 return True
+            log_with_timestamp(f"❌ Error refrescando token: {response.status_code}")
             return False
         except Exception as e:
-            print(f"Error refrescando token: {str(e)}")
+            log_with_timestamp(f"❌ Error refrescando token: {str(e)}")
             return False
 
 class EVEStructureMonitor:
@@ -143,10 +147,10 @@ class EVEStructureMonitor:
                 structure_info = response.json()
                 return structure_info.get('name', 'Nombre desconocido')
             else:
-                print(f"❌ Error obteniendo nombre de estructura {structure_id}: Status code {response.status_code}")
+                log_with_timestamp(f"❌ Error obteniendo nombre de estructura {structure_id}: Status code {response.status_code}")
                 return "Nombre desconocido"
         except Exception as e:
-            print(f"❌ Error obteniendo nombre de estructura {structure_id}: {str(e)}")
+            log_with_timestamp(f"❌ Error obteniendo nombre de estructura {structure_id}: {str(e)}")
             return "Nombre desconocido"
 
     async def get_corp_structures(self):
@@ -192,9 +196,9 @@ class EVEStructureMonitor:
 
     async def check_structures_status(self):
         """Verificar el estado de todas las estructuras"""
-        print("⏰ Iniciando verificación de estructuras...")
+        log_with_timestamp("⏰ Iniciando verificación de estructuras...")
         structures = await self.get_corp_structures()
-        print(f"📊 Número de estructuras encontradas: {len(structures)}")
+        log_with_timestamp(f"📊 Número de estructuras encontradas: {len(structures)}")
         alerts = []
 
         for structure in structures:
@@ -203,17 +207,18 @@ class EVEStructureMonitor:
                 'state': structure.get('state'),
                 'fuel_expires': structure.get('fuel_expires'),
                 'under_attack': structure.get('under_attack', False),
-                'shield_percentage': structure.get('shield_percentage', None)  # Cambiado de 100 a None
+                'shield_percentage': structure.get('shield_percentage', None)
             }
 
-            print(f"🏢 Estructura {structure_id}:")
-            print(f"   - Estado: {current_status['state']}")
-            print(f"   - Combustible expira: {current_status['fuel_expires']}")
-            print(f"   - Bajo ataque: {'🚨 SÍ' if current_status['under_attack'] else '✅ NO'}")
+            log_with_timestamp(f"🏢 Estructura {structure.get('name', structure_id)}:")
+            log_with_timestamp(f"   - Estado: {current_status['state']}")
+            log_with_timestamp(f"   - Combustible expira: {current_status['fuel_expires']}")
+            log_with_timestamp(f"   - Bajo ataque: {'🚨 SÍ' if current_status['under_attack'] else '✅ NO'}")
+            
             if current_status['shield_percentage'] is not None:
-                print(f"   - Escudos: {current_status['shield_percentage']:.1f}%")
+                log_with_timestamp(f"   - Escudos: {current_status['shield_percentage']:.1f}%")
             else:
-                print("   - Escudos: No disponible")
+                log_with_timestamp("   - Escudos: No disponible")
 
             if current_status['under_attack']:
                 alerts.append(f"🚨 ¡ALERTA! {structure.get('name', 'Estructura')} está bajo ataque!")
@@ -235,8 +240,28 @@ class EVEStructureMonitor:
 
         return alerts
 
-# Rutas de Flask
-# Rutas de Flask para keep-alive
+# Configurar las rutas de Flask
+@app.route('/callback')
+def callback():
+    """Ruta para manejar el callback de EVE Online"""
+    code = request.args.get('code')
+    state = request.args.get('state')
+    
+    if not code or not state:
+        return "Faltan parámetros 'code' o 'state'.", 400
+
+    if state != auth_state.get('state'):
+        return "El parámetro 'state' no es válido o ha caducado.", 400
+
+    if auth is None:
+        return "No se ha iniciado el proceso de autenticación.", 400
+
+    success = auth.exchange_code(code)
+    if success:
+        return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
+    else:
+        return "Hubo un error en la autenticación. Intenta de nuevo.", 400
+
 @app.route('/ping')
 def ping():
     """Endpoint para mantener el servicio activo"""
@@ -263,39 +288,8 @@ def status():
         "is_service_active": is_service_active
     }
 
-def keep_alive():
-    """Función para mantener el servicio activo"""
-    global is_service_active
-    log_with_timestamp("🚀 Iniciando sistema keep-alive")
-    ping_count = 0
-    
-    while is_service_active:
-        try:
-            response = requests.get(f'{RENDER_URL}/ping')
-            ping_count += 1
-            if response.status_code == 200:
-                # Solo loggeamos cada 10 pings para evitar spam en los logs
-                if ping_count % 10 == 0:
-                    log_with_timestamp(f"✅ Keep-alive funcionando - Pings exitosos: {ping_count}")
-            else:
-                log_with_timestamp(f"⚠️ Keep-alive ping respondió con código: {response.status_code}")
-        except Exception as e:
-            log_with_timestamp(f"❌ Error en keep-alive: {str(e)}")
-            ping_count = 0  # Reiniciamos el contador si hay error
-        
-        # Dormir por 30 segundos
-        time.sleep(30)  # Hacemos ping cada 30 segundos para evitar que el servicio se duerma
-
-def stop_keep_alive():
-    """Función para detener el sistema keep-alive de manera segura"""
-    global is_service_active
-    is_service_active = False
-    log_with_timestamp("🛑 Deteniendo sistema keep-alive")
-
-# Configuración de comandos
+# Comandos del bot
 class EVECommands(commands.Cog):
-    """Comandos para el manejo de estructuras de EVE Online"""
-    
     def __init__(self, bot):
         self.bot = bot
     
@@ -324,15 +318,6 @@ class EVECommands(commands.Cog):
         else:
             await ctx.send("ℹ️ El bot ya está en proceso de autenticación o ya está autenticado.")
     
-    @commands.command(name='setup')
-    async def setup(self, ctx):
-        """Inicia el proceso de configuración del bot"""
-        await ctx.send("🔧 Proceso de configuración:\n"
-                      "1. Usa !auth para autenticar el bot con EVE Online\n"
-                      "2. Una vez autenticado, el bot comenzará a monitorear las estructuras\n"
-                      "3. Usa !status para verificar el estado actual\n"
-                      "4. Usa !structures para ver el estado de todas las estructuras")
-
     @commands.command(name='structures')
     async def structures(self, ctx):
         """Muestra el estado actual de todas las estructuras"""
@@ -348,22 +333,21 @@ class EVECommands(commands.Cog):
                 await ctx.send("📝 No se encontraron estructuras o no se pudieron obtener.")
                 return
 
-            # Crear un mensaje formateado para cada estructura
             status_message = "📊 **Estado actual de las estructuras:**\n\n"
             
             for structure in structures:
-                fuel_expires = structure.get('fuel_expires', 'N/A')
-                if fuel_expires != 'N/A':
-                    fuel_time = datetime.datetime.strptime(fuel_expires, '%Y-%m-%dT%H:%M:%SZ')
-                    time_remaining = fuel_time - datetime.datetime.utcnow()
-                    fuel_status = f"⏳ {time_remaining.days}d {time_remaining.seconds//3600}h"
-                else:
-                    fuel_status = "❓ N/A"
-
                 # Manejar el valor de los escudos
                 shield_value = structure.get('shield_percentage')
                 shield_display = f"{shield_value:.1f}" if shield_value is not None else "No disponible"
                 shield_emoji = "🛡️" if shield_value is not None else "❓"
+
+                fuel_expires = structure.get('fuel_expires')
+                if fuel_expires:
+                    fuel_time = datetime.datetime.strptime(fuel_expires, '%Y-%m-%dT%H:%M:%SZ')
+                    time_remaining = fuel_time - datetime.datetime.utcnow()
+                    fuel_status = f"⏳ {time_remaining.days}d {time_remaining.seconds//3600}h"
+                else:
+                    fuel_status = "❓ No disponible"
 
                 status_message += (
                     f"🏢 **{structure.get('name', 'Estructura sin nombre')}**\n"
@@ -383,18 +367,23 @@ class EVECommands(commands.Cog):
                 await ctx.send(status_message)
 
         except Exception as e:
-            print(f"❌ Error obteniendo estado de estructuras: {str(e)}")
+            log_with_timestamp(f"❌ Error obteniendo estado de estructuras: {str(e)}")
             await ctx.send(f"❌ Error obteniendo estado de estructuras: {str(e)}")
 
-# Tareas programadas
-def log_with_timestamp(message):
-    """Función auxiliar para imprimir logs con timestamp"""
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{current_time}] {message}")
+    @commands.command(name='setup')
+    async def setup(self, ctx):
+        """Inicia el proceso de configuración del bot"""
+        await ctx.send("🔧 Proceso de configuración:\n"
+                      "1. Usa !auth para autenticar el bot con EVE Online\n"
+                      "2. Una vez autenticado, el bot comenzará a monitorear las estructuras\n"
+                      "3. Usa !status para verificar el estado actual\n"
+                      "4. Usa !structures para ver el estado de todas las estructuras")
 
+# Tareas programadas
 @tasks.loop(minutes=2)
 async def check_status():
     """Verifica el estado de las estructuras periódicamente"""
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_with_timestamp("================================================")
     log_with_timestamp("🔄 INICIANDO VERIFICACIÓN PERIÓDICA DE ESTRUCTURAS")
     
@@ -421,7 +410,7 @@ async def check_status():
                 log_with_timestamp(f"❌ Error: No se pudo encontrar el canal con ID {CHANNEL_ID}")
         else:
             log_with_timestamp("✅ No hay alertas que reportar")
-        
+            
         log_with_timestamp("✅ Verificación completada")
         log_with_timestamp("================================================")
             
@@ -430,80 +419,82 @@ async def check_status():
         import traceback
         log_with_timestamp(traceback.format_exc())
 
-@check_status.before_loop
-async def before_check_status():
-    """Se ejecuta antes de iniciar el loop de verificación"""
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"⏳ [{current_time}] Esperando a que el bot esté listo antes de iniciar las verificaciones...")
-    await bot.wait_until_ready()
-    print(f"✅ [{current_time}] Bot listo, iniciando loop de verificación...")
+def keep_alive():
+    """Función para mantener el servicio activo"""
+    global is_service_active
+    log_with_timestamp("🚀 Iniciando sistema keep-alive")
+    ping_count = 0
+    
+    while is_service_active:
+        try:
+            response = requests.get(f'{RENDER_URL}/ping')
+            ping_count += 1
+            if response.status_code == 200:
+                # Solo loggeamos cada 10 pings para evitar spam en los logs
+                if ping_count % 10 == 0:
+                    log_with_timestamp(f"✅ Keep-alive funcionando - Pings exitosos: {ping_count}")
+            else:
+                log_with_timestamp(f"⚠️ Keep-alive ping respondió con código: {response.status_code}")
+        except Exception as e:
+            log_with_timestamp(f"❌ Error en keep-alive: {str(e)}")
+            ping_count = 0  # Reiniciamos el contador si hay error
+        
+        # Dormir por 30 segundos
+        time.sleep(30)
 
-@check_status.after_loop
-async def after_check_status():
-    """Se ejecuta si el loop se detiene"""
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"⚠️ [{current_time}] Loop de verificación detenido!")
-    if check_status.failed():
-        print(f"❌ [{current_time}] El loop se detuvo debido a un error: {check_status.get_task().exception()}")
+def stop_keep_alive():
+    """Función para detener el sistema keep-alive de manera segura"""
+    global is_service_active
+    is_service_active = False
+    log_with_timestamp("🛑 Deteniendo sistema keep-alive")
+
+def run_flask():
+    """Función para ejecutar el servidor Flask"""
+    app.run(host='0.0.0.0', port=8080)
 
 # Eventos del bot
 @bot.event
 async def on_ready():
     """Evento que se ejecuta cuando el bot está listo"""
     current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"\n🚀 [{current_time}] ¡Bot conectado como {bot.user.name}!")
-    print(f"🆔 [{current_time}] ID del bot: {bot.user.id}")
+    log_with_timestamp(f"\n🚀 [{current_time}] ¡Bot conectado como {bot.user.name}!")
+    log_with_timestamp(f"🆔 [{current_time}] ID del bot: {bot.user.id}")
     
     try:
         await bot.add_cog(EVECommands(bot))
-        print(f"✅ [{current_time}] Comandos EVE registrados correctamente")
+        log_with_timestamp(f"✅ [{current_time}] Comandos EVE registrados correctamente")
     except Exception as e:
-        print(f"❌ [{current_time}] Error registrando comandos: {str(e)}")
+        log_with_timestamp(f"❌ [{current_time}] Error registrando comandos: {str(e)}")
     
     if not check_status.is_running():
-        print(f"▶️ [{current_time}] Iniciando tarea de verificación...")
+        log_with_timestamp(f"▶️ [{current_time}] Iniciando tarea de verificación...")
         check_status.start()
     else:
-        print(f"ℹ️ [{current_time}] La tarea de verificación ya está en ejecución")
+        log_with_timestamp(f"ℹ️ [{current_time}] La tarea de verificación ya está en ejecución")
     
-    print(f"📋 [{current_time}] Comandos registrados:")
+    log_with_timestamp(f"📋 [{current_time}] Comandos registrados:")
     for command in bot.commands:
-        print(f"  - !{command.name}")
+        log_with_timestamp(f"  - !{command.name}")
 
-@bot.event
-async def on_command_error(ctx, error):
-    """Manejo de errores de comandos"""
-    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    if isinstance(error, commands.CommandNotFound):
-        await ctx.send(f"❌ Comando no encontrado. Los comandos disponibles son: {', '.join(['!' + cmd.name for cmd in bot.commands])}")
-    else:
-        print(f"❌ [{current_time}] Error ejecutando comando: {str(error)}")
-        await ctx.send(f"❌ Error ejecutando el comando: {str(error)}")
-
-def run_flask():
-    """Función para ejecutar el servidor Flask"""
-    app.run(host='0.0.0.0', port=8080)
-
-@app.route('/ping')
-def ping():
-    """Endpoint para mantener el servicio activo"""
-    return "pong", 200
-
-def keep_alive():
-    """Función para mantener el servicio activo haciendo ping cada 14 minutos"""
-    while True:
-        try:
-            requests.get('https://tu-app.onrender.com/ping')
-            time.sleep(840)  # 14 minutos en segundos
-        except Exception as e:
-            print(f"Error en keep_alive: {str(e)}")
-            time.sleep(60)  # Esperar 1 minuto si hay error
-
-# En la parte principal del código
+# Ejecución principal
 if __name__ == '__main__':
-    # Iniciar el thread de keep-alive
-    threading.Thread(target=keep_alive, daemon=True).start()
-    # Iniciar Flask en un hilo separado
-    threading.Thread(target=run_flask).start()
-    # Iniciar el bot de Discord
-    bot.run(TOKEN)
+    try:
+        # Iniciar el thread de keep-alive
+        keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+        keep_alive_thread.start()
+        log_with_timestamp("✅ Thread keep-alive iniciado")
+        
+        # Iniciar Flask en un hilo separado
+        flask_thread = threading.Thread(target=run_flask)
+        flask_thread.start()
+        log_with_timestamp("✅ Thread Flask iniciado")
+        
+        # Iniciar el bot de Discord
+        log_with_timestamp("🤖 Iniciando bot de Discord...")
+        bot.run(TOKEN)
+    except Exception as e:
+        log_with_timestamp(f"❌ Error crítico: {str(e)}")
+    finally:
+        # Asegurar una limpieza adecuada
+        stop_keep_alive()
+        log_with_timestamp("👋 Servicio finalizado")
