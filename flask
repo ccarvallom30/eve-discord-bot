@@ -15,7 +15,8 @@ def home():
     return "Bot de Discord funcionando"
 
 def run_flask():
-    app.run(host='0.0.0.0', port=8080)  # Usamos el puerto 8080
+    port = int(os.getenv("PORT", 8080))  # Usamos el puerto proporcionado por Render o 8080 por defecto
+    app.run(host='0.0.0.0', port=port)  # Usamos el puerto dinámico
 
 # Comando para verificar que el bot está en línea
 @bot.command(name="ping")
