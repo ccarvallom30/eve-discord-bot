@@ -175,7 +175,7 @@ async def on_ready():
     # Iniciar tareas en segundo plano
     check_status.start()
 
-@tasks.loop(minutes=10)  # Verificar cada 10 minutos
+@tasks.loop(minutes=2)  # Verificar cada 2 minutos
 async def check_status():
     """Verifica el estado de las estructuras cada 10 minutos"""
     if auth and auth.access_token:  # Asegúrate de que 'auth' está definido y tiene el token
@@ -193,10 +193,15 @@ async def check_status():
 async def auth(ctx):
     """Comando para iniciar la autenticación en EVE Online"""
     global auth
-    auth = EVEAuth()
-    auth_url = await auth.get_auth_url()
-    await ctx.send(f"Para autorizar el bot, haz clic en este enlace: {auth_url}")
 
+    # Verifica si ya existe una instancia de auth en proceso
+    if auth is None or (auth.access_token and auth.refresh_token):
+        auth = EVEAuth()
+        auth_url = await auth.get_auth_url()
+        await ctx.send(f"Para autorizar el bot, haz clic en este enlace: {auth_url}")
+    else:
+        await ctx.send("El bot ya está en proceso de autenticación. Espera un momento.")
+        
 # Ejecutar el bot en un hilo separado para permitir que Flask funcione
 def run_discord_bot():
     bot.run(TOKEN)
