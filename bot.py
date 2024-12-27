@@ -2,7 +2,6 @@ import discord
 import os
 import requests
 from discord.ext import commands
-import webbrowser
 from flask import Flask, request
 import threading
 
@@ -34,8 +33,8 @@ async def auth(ctx):
         await ctx.send("Las credenciales no están configuradas correctamente. Usa `!setup` para configurarlas.")
         return
     
+    # Enviar el enlace de autorización en el chat de Discord
     await ctx.send(f"Por favor autoriza el acceso a tu cuenta de EVE Online haciendo clic en el siguiente enlace: {AUTH_URL}")
-    webbrowser.open(AUTH_URL)
 
 # Ruta de callback en Flask para manejar la respuesta de OAuth2
 @app.route("/callback")
@@ -74,7 +73,6 @@ async def on_ready():
 @bot.command()
 async def ping(ctx):
     await ctx.send('Pong!')
-
 
 # Función para ejecutar Flask en un hilo separado
 def run_flask():
