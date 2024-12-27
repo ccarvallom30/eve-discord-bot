@@ -45,7 +45,7 @@ class EVEAuth:
     
     async def get_auth_url(self):
         """Genera URL de autenticación"""
-        scopes = 'esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
+        scopes = '&esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
         state = self.generate_state()
         auth_state['state'] = state
 
