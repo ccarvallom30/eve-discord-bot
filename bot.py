@@ -24,7 +24,12 @@ ESI_BASE_URL = 'https://esi.evetech.net/latest'
 
 # Configurar intents del bot
 intents = discord.Intents.all()  # Habilitar todos los intents
-bot = commands.Bot(command_prefix='!', intents=intents, case_insensitive=True)  # Hacer los comandos case-insensitive
+bot = commands.Bot(
+    command_prefix='!', 
+    intents=intents, 
+    case_insensitive=True,
+    description='Bot para monitorear estructuras de EVE Online'
+)  # Hacer los comandos case-insensitive
 
 # Crear una instancia de Flask para abrir un puerto
 app = Flask(__name__)
@@ -263,35 +268,63 @@ async def authenticate_command(ctx):
     else:
         await ctx.send("El bot ya está en proceso de autenticación o ya está autenticado.")
 
-@bot.command(name='status')
-async def status_command(ctx):
-    """Comando para verificar el estado de autenticación del bot"""
-    if auth and auth.access_token:
-        await ctx.send("✅ El bot está autenticado y monitoreando estructuras.")
-    else:
-        await ctx.send("❌ El bot no está autenticado. Usa !authenticate para comenzar.")
+class EVECommands(commands.Cog):
+    """Comandos para el manejo de estructuras de EVE Online"""
+    
+    def __init__(self, bot):
+        self.bot = bot
+    
+    @commands.command(name='ping')
+    async def ping(self, ctx):
+        """Prueba la respuesta del bot"""
+        await ctx.send('¡Pong! 🏓')
+    
+    @commands.command(name='status')
+    async def status(self, ctx):
+        """Muestra el estado actual de autenticación del bot"""
+        if auth and auth.access_token:
+            await ctx.send("✅ El bot está autenticado y monitoreando estructuras.")
+        else:
+            await ctx.send("❌ El bot no está autenticado. Usa !auth para comenzar.")
+    
+    @commands.command(name='auth')
+    async def auth(self, ctx):
+        """Inicia el proceso de autenticación con EVE Online"""
+        global auth
+        
+        if auth is None or (auth.access_token is None and auth.refresh_token is None):
+            auth = EVEAuth()
+            auth_url = await auth.get_auth_url()
+            await ctx.send(f"📝 Para autorizar el bot, haz clic en este enlace: {auth_url}")
+        else:
+            await ctx.send("ℹ️ El bot ya está en proceso de autenticación o ya está autenticado.")
+    
+    @commands.command(name='setup')
+    async def setup(self, ctx):
+        """Inicia el proceso de configuración del bot"""
+        await ctx.send("🔧 Proceso de configuración:\n"
+                      "1. Usa !auth para autenticar el bot con EVE Online\n"
+                      "2. Una vez autenticado, el bot comenzará a monitorear las estructuras\n"
+                      "3. Usa !status para verificar el estado actual")
 
-@bot.command(name='ping')
-async def ping_command(ctx):
-    """Comando simple para probar si el bot responde"""
-    await ctx.send('pong!')
+# Removemos el comando help personalizado para usar el predeterminado
+bot.remove_command('help')
 
-@bot.command(name='help')
-async def help_command(ctx):
-    """Muestra la lista de comandos disponibles"""
-    commands_list = [f"!{command.name}: {command.help}" for command in bot.commands]
-    help_text = "**Comandos disponibles:**\n" + "\n".join(commands_list)
-    await ctx.send(help_text)
+# Registramos el nuevo Cog
+async def setup(bot):
+    await bot.add_cog(EVECommands(bot))
 
-@bot.command(name='auth')
-async def auth_command(ctx):
-    """Alias para el comando authenticate"""
-    await authenticate_command(ctx)
-
-@bot.command(name='setup')
-async def setup_command(ctx):
-    """Comando para configuración inicial"""
-    await ctx.send("Iniciando configuración. Por favor, usa !auth primero para autenticar el bot.")
+# Añadimos el Cog cuando el bot está listo
+@bot.event
+async def on_ready():
+    """Evento que se ejecuta cuando el bot está listo"""
+    print(f'¡Bot conectado como {bot.user.name}!')
+    print(f'ID del bot: {bot.user.id}')
+    await setup(bot)
+    print('Comandos registrados:')
+    for command in bot.commands:
+        print(f'- !{command.name}')
+    check_status.start()
 
 def run_flask():
     """Función para ejecutar el servidor Flask"""
