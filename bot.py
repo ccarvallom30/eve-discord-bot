@@ -266,4 +266,4 @@ async def structures(ctx):
 
         embed.add_field(
             name=f"Estructura {structure['structure_id']}",
-            value=f"
+            value=f"""
