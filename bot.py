@@ -5,8 +5,12 @@ from discord.ext import commands
 from flask import Flask, request
 import threading
 
-# Configuración de tu bot
-intents = discord.Intents.default()
+# Crear un objeto de intents con los permisos adecuados
+intents = discord.Intents.default()  # Esto habilita los intents básicos
+intents.message_content = True  # Habilita el permiso para leer el contenido de los mensajes
+intents.messages = True  # Habilita el permiso para manejar eventos de mensajes (como cuando se envía un mensaje)
+
+# Crear el bot con los intents habilitados
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Configuración de EVE Online
