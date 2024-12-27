@@ -1,17 +1,14 @@
 import discord
 from discord.ext import commands, tasks
-import requests
-import json
-import datetime
-import asyncio
 import os
-import base64
+import datetime
+import requests
 from dotenv import load_dotenv
 
 # Cargar variables de entorno
 load_dotenv()
 
-# Configuración del bot
+# Configuración básica del bot
 TOKEN = os.getenv('DISCORD_TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', '0'))
 CORP_ID = os.getenv('CORP_ID')
@@ -58,7 +55,6 @@ class EVEAuth:
                 self.refresh_token = tokens['refresh_token']
                 return True
             return False
-            
         except Exception as e:
             print(f"Error en autenticación: {str(e)}")
             return False
@@ -73,7 +69,6 @@ class EVEStructureMonitor:
         """Obtener todas las estructuras de la corporación"""
         if not self.auth.access_token:
             return []
-            
         try:
             headers = {'Authorization': f'Bearer {self.auth.access_token}'}
             response = requests.get(
