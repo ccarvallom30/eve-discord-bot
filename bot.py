@@ -38,14 +38,20 @@ def callback():
     """Ruta para manejar el callback de EVE Online"""
     code = request.args.get('code')
     state = request.args.get('state')
-    
+
     if not code or not state:
         return "Faltan parámetros 'code' o 'state'.", 400
 
+    # Verifica que el estado sea el correcto
     if state != auth_state.get('state'):
         return "El parámetro 'state' no es válido o ha caducado.", 400
 
+    # Crear una instancia de EVEAuth para intercambiar el código
+    auth = EVEAuth()
+
+    # Intercambiar el código por el access_token
     success = auth.exchange_code(code)
+
     if success:
         return "Autenticación exitosa, el bot está listo para monitorear estructuras.", 200
     else:
@@ -168,6 +174,7 @@ class EVEStructureMonitor:
 @bot.event
 async def on_ready():
     print(f'¡Bot conectado como {bot.user.name}!')
+
     # Iniciar tareas en segundo plano
     check_status.start()
 
@@ -186,7 +193,7 @@ async def check_status():
         print("El bot no está autenticado, no se pueden verificar las estructuras.")
 
 @bot.command()
-async def auth(ctx):
+async def setup(ctx):
     """Comando para iniciar la autenticación en EVE Online"""
     auth = EVEAuth()
     auth_url = await auth.get_auth_url()
