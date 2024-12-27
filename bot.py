@@ -1,5 +1,7 @@
 import discord
 from discord.ext import commands, tasks
+import requestsmport discord
+from discord.ext import commands, tasks
 import requests
 import json
 import datetime
@@ -266,4 +268,13 @@ async def structures(ctx):
 
         embed.add_field(
             name=f"Estructura {structure['structure_id']}",
-            value=f"""
+            value=f"Estado: {status}\nCombustible restante: {fuel_time if 'fuel_expires' in structure else 'Desconocido'}",
+            inline=False
+        )
+    
+    await ctx.send(embed=embed)
+
+# Iniciar el bot y el servidor Flask en hilos separados
+if __name__ == '__main__':
+    threading.Thread(target=run_flask).start()
+    bot.run(TOKEN)
