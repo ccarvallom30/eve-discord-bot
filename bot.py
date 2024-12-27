@@ -29,7 +29,7 @@ bot = commands.Bot(
     intents=intents, 
     case_insensitive=True,
     description='Bot para monitorear estructuras de EVE Online'
-)  # Hacer los comandos case-insensitive
+)
 
 # Crear una instancia de Flask para abrir un puerto
 app = Flask(__name__)
@@ -103,7 +103,7 @@ class EVEAuth:
             if response.status_code == 200:
                 tokens = response.json()
                 self.access_token = tokens['access_token']
-                if 'refresh_token' in tokens:  # Algunos endpoints devuelven un nuevo refresh token
+                if 'refresh_token' in tokens:
                     self.refresh_token = tokens['refresh_token']
                 return True
             return False
@@ -120,36 +120,44 @@ class EVEStructureMonitor:
     async def get_corp_structures(self):
         """Obtener todas las estructuras de la corporación"""
         if not self.auth.access_token:
+            print("❌ Error: No hay access token disponible")
             return []
             
         try:
+            print(f"📡 Intentando obtener estructuras para la corporación {CORP_ID}")
             headers = {'Authorization': f'Bearer {self.auth.access_token}'}
-            response = requests.get(
-                f'{ESI_BASE_URL}/corporations/{CORP_ID}/structures/',
-                headers=headers
-            )
+            
+            url = f'{ESI_BASE_URL}/corporations/{CORP_ID}/structures/'
+            print(f"🌐 Haciendo request a: {url}")
+            
+            response = requests.get(url, headers=headers)
+            print(f"📥 Código de respuesta: {response.status_code}")
+            print(f"📄 Contenido de respuesta: {response.text[:200]}...")
             
             if response.status_code == 401:  # Token expirado
+                print("🔄 Token expirado, intentando refrescar...")
                 if await self.auth.refresh_access_token():
-                    # Reintentar con el nuevo token
                     headers = {'Authorization': f'Bearer {self.auth.access_token}'}
-                    response = requests.get(
-                        f'{ESI_BASE_URL}/corporations/{CORP_ID}/structures/',
-                        headers=headers
-                    )
+                    response = requests.get(url, headers=headers)
+                    print(f"📥 Código de respuesta después de refrescar: {response.status_code}")
             
             if response.status_code == 200:
-                return response.json()
-            
-            print(f"Error en get_corp_structures: Status code {response.status_code}")
+                structures = response.json()
+                print(f"✅ Estructuras obtenidas exitosamente. Cantidad: {len(structures)}")
+                return structures
+            else:
+                print(f"❌ Error obteniendo estructuras: Status code {response.status_code}")
+                print(f"Mensaje de error: {response.text}")
             return []
         except Exception as e:
-            print(f"Error obteniendo estructuras: {str(e)}")
+            print(f"❌ Error en get_corp_structures: {str(e)}")
             return []
 
     async def check_structures_status(self):
         """Verificar el estado de todas las estructuras"""
+        print("⏰ Iniciando verificación de estructuras...")
         structures = await self.get_corp_structures()
+        print(f"📊 Número de estructuras encontradas: {len(structures)}")
         alerts = []
 
         for structure in structures:
@@ -161,7 +169,11 @@ class EVEStructureMonitor:
                 'shield_percentage': structure.get('shield_percentage', 100)
             }
 
-            print(f"Estado de la estructura {structure_id}: {current_status}")
+            print(f"🏢 Estructura {structure_id}:")
+            print(f"   - Estado: {current_status['state']}")
+            print(f"   - Combustible expira: {current_status['fuel_expires']}")
+            print(f"   - Bajo ataque: {'🚨 SÍ' if current_status['under_attack'] else '✅ NO'}")
+            print(f"   - Escudos: {current_status['shield_percentage']}%")
 
             if current_status['under_attack']:
                 alerts.append(f"🚨 ¡ALERTA! Estructura {structure_id} está bajo ataque!")
@@ -169,11 +181,9 @@ class EVEStructureMonitor:
             if structure_id in self.structures_status:
                 old_status = self.structures_status[structure_id]
                 
-                # Verificar cambios en el estado de ataque
                 if current_status['under_attack'] and not old_status.get('under_attack', False):
                     alerts.append(f"🚨 ¡ALERTA! Estructura {structure_id} está bajo ataque!")
 
-                # Verificar nivel de combustible
                 if current_status['fuel_expires']:
                     fuel_time = datetime.datetime.strptime(current_status['fuel_expires'], '%Y-%m-%dT%H:%M:%SZ')
                     time_remaining = fuel_time - datetime.datetime.utcnow()
@@ -207,67 +217,7 @@ def callback():
     else:
         return "Hubo un error en la autenticación. Intenta de nuevo.", 400
 
-# Eventos y comandos del bot
-@bot.event
-async def on_ready():
-    """Evento que se ejecuta cuando el bot está listo"""
-    print(f'¡Bot conectado como {bot.user.name}!')
-    print(f'ID del bot: {bot.user.id}')
-    print('Comandos registrados:')
-    for command in bot.commands:
-        print(f'- !{command.name}')
-    check_status.start()
-
-@bot.event
-async def on_command_error(ctx, error):
-    """Manejo de errores de comandos"""
-    if isinstance(error, commands.CommandNotFound):
-        await ctx.send(f"❌ Comando no encontrado. Los comandos disponibles son: {', '.join(['!' + cmd.name for cmd in bot.commands])}")
-    else:
-        print(f"Error ejecutando comando: {str(error)}")
-        await ctx.send(f"❌ Error ejecutando el comando: {str(error)}")
-
-@bot.event
-async def on_message(message):
-    """Log de mensajes para diagnóstico"""
-    if message.author == bot.user:
-        return
-        
-    print(f"Mensaje recibido: {message.content}")
-    print(f"Autor: {message.author}")
-    print(f"Canal: {message.channel}")
-    
-    await bot.process_commands(message)  # Importante para que los comandos sigan funcionando
-
-@tasks.loop(minutes=2)
-async def check_status():
-    """Verifica el estado de las estructuras periódicamente"""
-    if auth and auth.access_token:
-        monitor = EVEStructureMonitor(auth)
-        alerts = await monitor.check_structures_status()
-
-        if alerts:
-            channel = bot.get_channel(CHANNEL_ID)
-            if channel:
-                for alert in alerts:
-                    await channel.send(alert)
-            else:
-                print(f"Error: No se pudo encontrar el canal con ID {CHANNEL_ID}")
-    else:
-        print("El bot no está autenticado, no se pueden verificar las estructuras.")
-
-@bot.command(name='authenticate')
-async def authenticate_command(ctx):
-    """Comando para iniciar la autenticación en EVE Online"""
-    global auth
-
-    if auth is None or (auth.access_token is None and auth.refresh_token is None):
-        auth = EVEAuth()
-        auth_url = await auth.get_auth_url()
-        await ctx.send(f"Para autorizar el bot, haz clic en este enlace: {auth_url}")
-    else:
-        await ctx.send("El bot ya está en proceso de autenticación o ya está autenticado.")
-
+# Configuración de comandos
 class EVECommands(commands.Cog):
     """Comandos para el manejo de estructuras de EVE Online"""
     
@@ -305,26 +255,141 @@ class EVECommands(commands.Cog):
         await ctx.send("🔧 Proceso de configuración:\n"
                       "1. Usa !auth para autenticar el bot con EVE Online\n"
                       "2. Una vez autenticado, el bot comenzará a monitorear las estructuras\n"
-                      "3. Usa !status para verificar el estado actual")
+                      "3. Usa !status para verificar el estado actual\n"
+                      "4. Usa !structures para ver el estado de todas las estructuras")
 
-# Removemos el comando help personalizado para usar el predeterminado
-bot.remove_command('help')
+    @commands.command(name='structures')
+    async def structures(self, ctx):
+        """Muestra el estado actual de todas las estructuras"""
+        if not auth or not auth.access_token:
+            await ctx.send("❌ El bot no está autenticado. Usa !auth primero.")
+            return
 
-# Registramos el nuevo Cog
-async def setup(bot):
-    await bot.add_cog(EVECommands(bot))
+        try:
+            monitor = EVEStructureMonitor(auth)
+            structures = await monitor.get_corp_structures()
+            
+            if not structures:
+                await ctx.send("📝 No se encontraron estructuras o no se pudieron obtener.")
+                return
 
-# Añadimos el Cog cuando el bot está listo
+            # Crear un mensaje formateado para cada estructura
+            status_message = "📊 **Estado actual de las estructuras:**\n\n"
+            
+            for structure in structures:
+                fuel_expires = structure.get('fuel_expires', 'N/A')
+                if fuel_expires != 'N/A':
+                    fuel_time = datetime.datetime.strptime(fuel_expires, '%Y-%m-%dT%H:%M:%SZ')
+                    time_remaining = fuel_time - datetime.datetime.utcnow()
+                    fuel_status = f"⏳ {time_remaining.days}d {time_remaining.seconds//3600}h"
+                else:
+                    fuel_status = "❓ N/A"
+
+                status_message += (
+                    f"🏢 **Estructura {structure.get('structure_id')}**\n"
+                    f"▫️ Estado: {structure.get('state', 'desconocido')}\n"
+                    f"▫️ Combustible restante: {fuel_status}\n"
+                    f"▫️ Bajo ataque: {'🚨 SÍ' if structure.get('under_attack', False) else '✅ NO'}\n"
+                    f"▫️ Escudos: {structure.get('shield_percentage', 'N/A')}%\n\n"
+                )
+
+            # Dividir el mensaje si es muy largo (límite de Discord es 2000 caracteres)
+            if len(status_message) > 1900:
+                messages = [status_message[i:i+1900] for i in range(0, len(status_message), 1900)]
+                for msg in messages:
+                    await ctx.send(msg)
+            else:
+                await ctx.send(status_message)
+
+        except Exception as e:
+            print(f"❌ Error obteniendo estado de estructuras: {str(e)}")
+            await ctx.send(f"❌ Error obteniendo estado de estructuras: {str(e)}")
+
+# Tareas programadas
+@tasks.loop(minutes=2)
+async def check_status():
+    """Verifica el estado de las estructuras periódicamente"""
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\n⏰ [{current_time}] Iniciando verificación periódica de estructuras...")
+    
+    if not auth:
+        print(f"❌ [{current_time}] Error: Variable auth no inicializada")
+        return
+        
+    if not auth.access_token:
+        print(f"❌ [{current_time}] Error: No hay access token disponible")
+        return
+        
+    try:
+        print(f"✅ [{current_time}] Bot autenticado, procediendo con la verificación")
+        monitor = EVEStructureMonitor(auth)
+        alerts = await monitor.check_structures_status()
+
+        if alerts:
+            channel = bot.get_channel(CHANNEL_ID)
+            if channel:
+                print(f"📢 [{current_time}] Enviando {len(alerts)} alertas al canal")
+                for alert in alerts:
+                    await channel.send(alert)
+            else:
+                print(f"❌ [{current_time}] Error: No se pudo encontrar el canal con ID {CHANNEL_ID}")
+        else:
+            print(f"✅ [{current_time}] No hay alertas que reportar")
+            
+    except Exception as e:
+        print(f"❌ [{current_time}] Error en check_status: {str(e)}")
+        import traceback
+        print(traceback.format_exc())
+
+@check_status.before_loop
+async def before_check_status():
+    """Se ejecuta antes de iniciar el loop de verificación"""
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"⏳ [{current_time}] Esperando a que el bot esté listo antes de iniciar las verificaciones...")
+    await bot.wait_until_ready()
+    print(f"✅ [{current_time}] Bot listo, iniciando loop de verificación...")
+
+@check_status.after_loop
+async def after_check_status():
+    """Se ejecuta si el loop se detiene"""
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"⚠️ [{current_time}] Loop de verificación detenido!")
+    if check_status.failed():
+        print(f"❌ [{current_time}] El loop se detuvo debido a un error: {check_status.get_task().exception()}")
+
+# Eventos del bot
 @bot.event
 async def on_ready():
     """Evento que se ejecuta cuando el bot está listo"""
-    print(f'¡Bot conectado como {bot.user.name}!')
-    print(f'ID del bot: {bot.user.id}')
-    await setup(bot)
-    print('Comandos registrados:')
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\n🚀 [{current_time}] ¡Bot conectado como {bot.user.name}!")
+    print(f"🆔 [{current_time}] ID del bot: {bot.user.id}")
+    
+    try:
+        await bot.add_cog(EVECommands(bot))
+        print(f"✅ [{current_time}] Comandos EVE registrados correctamente")
+    except Exception as e:
+        print(f"❌ [{current_time}] Error registrando comandos: {str(e)}")
+    
+    if not check_status.is_running():
+        print(f"▶️ [{current_time}] Iniciando tarea de verificación...")
+        check_status.start()
+    else:
+        print(f"ℹ️ [{current_time}] La tarea de verificación ya está en ejecución")
+    
+    print(f"📋 [{current_time}] Comandos registrados:")
     for command in bot.commands:
-        print(f'- !{command.name}')
-    check_status.start()
+        print(f"  - !{command.name}")
+
+@bot.event
+async def on_command_error(ctx, error):
+    """Manejo de errores de comandos"""
+    current_time = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send(f"❌ Comando no encontrado. Los comandos disponibles son: {', '.join(['!' + cmd.name for cmd in bot.commands])}")
+    else:
+        print(f"❌ [{current_time}] Error ejecutando comando: {str(error)}")
+        await ctx.send(f"❌ Error ejecutando el comando: {str(error)}")
 
 def run_flask():
     """Función para ejecutar el servidor Flask"""
