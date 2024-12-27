@@ -311,12 +311,23 @@ class EVECommands(commands.Cog):
         """Inicia el proceso de autenticación con EVE Online"""
         global auth
         
-        if auth is None or (auth.access_token is None and auth.refresh_token is None):
-            auth = EVEAuth()
-            auth_url = await auth.get_auth_url()
-            await ctx.send(f"📝 Para autorizar el bot, haz clic en este enlace: {auth_url}")
-        else:
-            await ctx.send("ℹ️ El bot ya está en proceso de autenticación o ya está autenticado.")
+        # Evitar múltiples solicitudes de autenticación
+        if hasattr(self, '_auth_in_progress'):
+            await ctx.send("⏳ Ya hay una autenticación en proceso, por favor espera...")
+            return
+            
+        self._auth_in_progress = True
+        
+        try:
+            if auth is None or (auth.access_token is None and auth.refresh_token is None):
+                auth = EVEAuth()
+                auth_url = await auth.get_auth_url()
+                log_with_timestamp("🔐 Iniciando proceso de autenticación - URL generada")
+                await ctx.send(f"📝 Para autorizar el bot, haz clic en este enlace: {auth_url}")
+            else:
+                await ctx.send("ℹ️ El bot ya está autenticado.")
+        finally:
+            delattr(self, '_auth_in_progress')
     
     @commands.command(name='structures')
     async def structures(self, ctx):
