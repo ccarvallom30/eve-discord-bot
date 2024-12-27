@@ -74,18 +74,18 @@ class EVEAuth:
         return ''.join(random.choices(string.ascii_letters + string.digits, k=16))
     
     async def get_auth_url(self):
-        """Genera URL de autenticación"""
-        scopes = 'esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
-        state = self.generate_state()  # Generamos un valor único para el 'state'
-        
-        # Almacenamos el estado generado para usarlo en el callback
-        auth_state['state'] = state
-
-    print(f"EVE_CLIENT_ID: {CLIENT_ID}")  # Esta línea imprime el CLIENT_ID
-        
-        
-        return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
+    """Genera URL de autenticación"""
+    scopes = 'esi-corporations.read_structures.v1 esi-universe.read_structures.v1'
+    state = self.generate_state()  # Generamos un valor único para el 'state'
     
+    # Almacenamos el estado generado para usarlo en el callback
+    auth_state['state'] = state
+
+    # Verificar que CLIENT_ID se ha cargado correctamente
+    print(f"EVE_CLIENT_ID: {CLIENT_ID}")  # Esta línea imprime el CLIENT_ID
+
+    # Ahora generamos la URL de autenticación
+    return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     async def exchange_code(self, code):
         """Intercambia el código por tokens"""
         try:
