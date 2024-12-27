@@ -432,13 +432,13 @@ async def check_structures():
         import traceback
         log_with_timestamp(traceback.format_exc())
 
-@check_structures.before_loop
+@check_status.before_loop
 async def before_check_status():
     """Se ejecuta antes de iniciar el loop de verificación"""
     await bot.wait_until_ready()
     log_with_timestamp("🔄 Tarea de verificación inicializada y esperando al bot...")
 
-@check_structures.after_loop
+@check_status.after_loop
 async def after_check_status():
     """Se ejecuta si el loop se detiene"""
     if check_status.failed():
@@ -447,26 +447,31 @@ async def after_check_status():
         log_with_timestamp("⚠️ La tarea de verificación se ha detenido")
 
 def keep_alive():
-    """Función para mantener el servicio activo"""
+    """Función para mantener el servicio activo y verificar estructuras"""
     global is_service_active
     log_with_timestamp("🚀 Iniciando sistema keep-alive")
     ping_count = 0
     
     while is_service_active:
         try:
+            # Hacer ping
             response = requests.get(f'{RENDER_URL}/ping')
             ping_count += 1
+            
             if response.status_code == 200:
-                # Solo loggeamos cada 10 pings para evitar spam en los logs
-                if ping_count % 10 == 0:
-                    log_with_timestamp(f"✅ Keep-alive funcionando - Pings exitosos: {ping_count}")
+                log_with_timestamp(f"✅ Keep-alive ping #{ping_count} exitoso")
+                
+                # Verificar estructuras cada 4 pings
+                if ping_count % 4 == 0:
+                    log_with_timestamp(f"🔄 Verificando estructuras en ping #{ping_count}")
+                    asyncio.run_coroutine_threadsafe(check_structures(), bot.loop)
             else:
-                log_with_timestamp(f"⚠️ Keep-alive ping respondió con código: {response.status_code}")
+                log_with_timestamp(f"⚠️ Keep-alive ping #{ping_count} respondió con código: {response.status_code}")
+                
         except Exception as e:
             log_with_timestamp(f"❌ Error en keep-alive: {str(e)}")
-            ping_count = 0  # Reiniciamos el contador si hay error
+            ping_count = 0
         
-        # Dormir por 30 segundos
         time.sleep(30)
 
 def stop_keep_alive():
@@ -490,11 +495,6 @@ async def on_ready():
     try:
         await bot.add_cog(EVECommands(bot))
         log_with_timestamp("✅ Comandos EVE registrados correctamente")
-        
-        # Primera verificación de estructuras
-        await asyncio.sleep(5)  # Esperar 5 segundos para asegurar que todo está inicializado
-        log_with_timestamp("🔄 Ejecutando verificación inicial...")
-        await check_structures()
         
         log_with_timestamp("📋 Comandos disponibles:")
         for command in bot.commands:
