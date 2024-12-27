@@ -1,14 +1,19 @@
 import discord
 from discord.ext import commands, tasks
-import os
-import datetime
 import requests
+import json
+import datetime
+import asyncio
+import os
+import base64
 from dotenv import load_dotenv
+from flask import Flask
+import threading
 
 # Cargar variables de entorno
 load_dotenv()
 
-# Configuración básica del bot
+# Configuración del bot
 TOKEN = os.getenv('DISCORD_TOKEN')
 CHANNEL_ID = int(os.getenv('CHANNEL_ID', '0'))
 CORP_ID = os.getenv('CORP_ID')
@@ -21,10 +26,19 @@ intents = discord.Intents.default()
 intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-import os
-import sys
-if 'PORT' not in os.environ:
-    os.environ['PORT'] = '5000'  # Puerto predeterminado
+# Crear una instancia de Flask para abrir un puerto
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot de Discord funcionando"
+
+def run_flask():
+    # Usar un puerto que Render asigna automáticamente
+    app.run(host='0.0.0.0', port=8080)
+
+# Aquí empieza la configuración de EVE y el monitoreo
+
 class EVEAuth:
     def __init__(self):
         self.access_token = None
@@ -73,6 +87,7 @@ class EVEStructureMonitor:
         """Obtener todas las estructuras de la corporación"""
         if not self.auth.access_token:
             return []
+            
         try:
             headers = {'Authorization': f'Bearer {self.auth.access_token}'}
             response = requests.get(
@@ -220,4 +235,10 @@ async def structures(ctx):
     await ctx.send(embed=embed)
 
 if __name__ == "__main__":
+    # Iniciar Flask en un hilo separado
+    thread = threading.Thread(target=run_flask)
+    thread.start()
+
+    # Arrancar el bot de Discord
     bot.run(TOKEN)
+
