@@ -3,6 +3,10 @@ import requests
 import asyncio
 import os
 from datetime import datetime
+from flask import Flask
+
+# Configura Flask
+app = Flask(__name__)
 
 # Configura el bot de Discord
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -71,6 +75,24 @@ async def check_notifications():
 async def on_ready():
     print(f"Bot conectado como {bot.user}")
 
+# Ruta básica de Flask para mantener el servicio activo
+@app.route("/")
+def home():
+    return "El bot de EVE Online está en funcionamiento."
+
 # Inicia el loop de notificaciones
 bot.loop.create_task(check_notifications())
-bot.run(TOKEN)
+
+if __name__ == "__main__":
+    # Ejecuta el bot y el servidor Flask
+    from threading import Thread
+
+    def run_flask():
+        app.run(host="0.0.0.0", port=8000)
+
+    # Ejecuta Flask en un hilo
+    thread = Thread(target=run_flask)
+    thread.start()
+
+    # Ejecuta el bot de Discord
+    bot.run(TOKEN)
