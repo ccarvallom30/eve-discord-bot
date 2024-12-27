@@ -80,6 +80,9 @@ class EVEAuth:
         
         # Almacenamos el estado generado para usarlo en el callback
         auth_state['state'] = state
+
+    print(f"EVE_CLIENT_ID: {CLIENT_ID}")  # Esta línea imprime el CLIENT_ID
+        
         
         return f"https://login.eveonline.com/v2/oauth/authorize/?response_type=code&redirect_uri=https://eve-discord-bot.onrender.com/callback&client_id={CLIENT_ID}&scope={scopes}&state={state}"
     
